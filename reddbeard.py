@@ -4,6 +4,7 @@ import argh
 import bz2
 import json
 import numpy as np
+import random
 import tensorflow as tf
 
 
@@ -12,7 +13,7 @@ ascii_pad_character = 256
 
 def get_sequences(records):
     with bz2.BZ2File(records, "rb") as dataset:
-        lines = dataset.readlines()
+        lines = random.shuffle(dataset.readlines())
         for line in lines:
             data = json.loads(line.decode("UTF-8"))
             yield data["body"]
@@ -71,16 +72,16 @@ def main(train_records):
     cell2 = tf.nn.rnn_cell.GRUCell(num_units=alpha_size)
     cell = tf.nn.rnn_cell.MultiRNNCell([cell1, cell2])
 
-    pre_outputs, states = tf.nn.dynamic_rnn(
+    outputs, states = tf.nn.dynamic_rnn(
         cell=cell,
         dtype=tf.float32,
         sequence_length=X_lengths,
         inputs=X)
-    outputs = tf.contrib.layers.batch_norm(pre_outputs)
+    #outputs = tf.contrib.layers.batch_norm(pre_outputs)
     outputs_flat = tf.reshape(outputs, [-1, alpha_size])
     Ylogits = tf.contrib.layers.linear(outputs_flat, alpha_size)     # [ BATCHSIZE x SEQLEN, ALPHASIZE ]
     logits = Ylogits
-    soft_logits = tf.nn.softmax(logits)
+    #soft_logits = tf.nn.softmax(logits)
     Yflat_ = tf.reshape(labels, [-1, alpha_size])     # [ BATCHSIZE x SEQLEN, ALPHASIZE ]
     print("yflat", Yflat_)
     print("logits", logits)
