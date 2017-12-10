@@ -76,7 +76,6 @@ def main(train_text):
     pre_labels = tf.placeholder(tf.int32, shape=[None, None])
     labels = tf.one_hot(pre_labels, alpha_size)
 
-    
     cell1 = tf.nn.rnn_cell.GRUCell(num_units=alpha_size)
     cell2 = tf.nn.rnn_cell.GRUCell(num_units=alpha_size)
     cell = tf.nn.rnn_cell.MultiRNNCell([cell1, cell2])
@@ -104,7 +103,7 @@ def main(train_text):
     sess.run(tf.global_variables_initializer())
 
 
-    sequence_length = 50
+    sequence_length = 100
     batch_size = 16
 
     for epoch in range(100):
@@ -114,7 +113,7 @@ def main(train_text):
             output_labels, input_sequences = batch_to_labels(batch)
 
             the_loss, _, the_logits, the_labels, the_outputs = sess.run([loss, optimizer, logits, labels, Yflat_], feed_dict={pre_X:input_sequences, pre_labels:output_labels})
-            real_logits = np.reshape(the_logits, (len(batch), 50, alpha_size))
+            real_logits = np.reshape(the_logits, (len(batch), sequence_length, alpha_size))
             avg_loss.append(the_loss)
 
             if num % 500 == 0 and num > 0:
@@ -122,7 +121,7 @@ def main(train_text):
 
         sample_start_char = random.randint(65, 90)
         sample_sequence = [sample_start_char]
-        for _ in range(75):
+        for _ in range(300):
             feed = {pre_X: [sample_sequence]}
             the_logits = sess.run(logits, feed_dict=feed)
             next_char = np.argmax(the_logits[-1])
@@ -131,7 +130,7 @@ def main(train_text):
 
         sample_start_char = random.randint(65, 90)
         sample_sequence = [sample_start_char]
-        for _ in range(75):
+        for _ in range(300):
             feed = {pre_X: [sample_sequence]}
             the_logits = sess.run(soft_logits, feed_dict=feed)
             next_char = np.random.choice(alpha_size, p=the_logits[-1])
