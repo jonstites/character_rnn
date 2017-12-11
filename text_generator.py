@@ -88,6 +88,7 @@ def build_graph(embedding=True):
             inputs=sequence)
 
         logits = tf.contrib.layers.linear(outputs, alpha_size)
+        print(logits)
         _ = tf.nn.softmax(logits, name="logits")
         loss = tf.reduce_mean(tf.nn.softmax_cross_entropy_with_logits(logits=logits, labels=sequence_labels))
         loss_tensor = tf.identity(loss, name="loss")
@@ -118,15 +119,14 @@ def main(train_text, sequence_length=100, sample_length=500, batch_size=32):
 
             sample_start_char = random.randint(65, 90)
             sample_sequence = [sample_start_char]
-            #sample_sequence = []
             for _ in range(sample_length):
                 feed = {"inputs:0":[sample_sequence]}
                 logits = sess.run("logits:0", feed_dict=feed)
-                next_char = np.random.choice(len(logits[-1]), p=logits[-1])
+                next_char = np.random.choice(len(logits[0][-1]), p=logits[0][-1])
                 sample_sequence.append(next_char)
             print("\nsample softmax:", ''.join([chr(s) for s in sample_sequence]))
             print("\nepoch:", epoch)
-            print("loss:", np.mean(avg_loss))
+            print("loss:", np.mean(avg_loss), flush=True)
             avg_loss = []
 
 
