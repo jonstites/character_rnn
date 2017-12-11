@@ -58,13 +58,13 @@ def sequence_to_label(sequence):
 def pad_ascii(seq, sequence_length):
     return seq + [0]*(sequence_length - len(seq))
 
-def build_graph(embedding=True):
+def build_graph(embedding=True, rnn_size=250):
     alpha_size = 256
     embedding_size = 50
-    rnn_size = 40
-    # batch, seq, alpha
+
     g = tf.Graph()
     with g.as_default():
+        # batch, seq, alpha        
         char_integers = tf.placeholder(tf.int32, shape=[None, None], name="inputs")
         if embedding:
             embeddings = tf.get_variable(
@@ -88,19 +88,28 @@ def build_graph(embedding=True):
             inputs=sequence)
 
         logits = tf.contrib.layers.linear(outputs, alpha_size)
-        print(logits)
         _ = tf.nn.softmax(logits, name="logits")
         loss = tf.reduce_mean(tf.nn.softmax_cross_entropy_with_logits(logits=logits, labels=sequence_labels))
         loss_tensor = tf.identity(loss, name="loss")
         optimizer = tf.train.AdamOptimizer().minimize(loss, name="optimizer")
         return g
 
-def main(train_text, sequence_length=100, sample_length=500, batch_size=32):
+def sample(sess, sample_length):
+    sample_start_char = random.randint(65, 90)
+    sample_sequence = [sample_start_char]
+    for _ in range(sample_length):
+        feed = {"inputs:0":[sample_sequence]}
+        logits = sess.run("logits:0", feed_dict=feed)
+        next_char = np.random.choice(len(logits[0][-1]), p=logits[0][-1])
+        sample_sequence.append(next_char)
+    return ''.join([chr(s) for s in sample_sequence])
+    
+def main(train_text, sequence_length=100, sample_length=500, batch_size=32, rnn_size=250):
     
     tf.reset_default_graph()
 
     # Create input data
-    graph = build_graph()
+    graph = build_graph(rnn_size=rnn_size)
     with tf.Session(graph=graph) as sess:
         sess.run(tf.global_variables_initializer())
 
@@ -117,14 +126,7 @@ def main(train_text, sequence_length=100, sample_length=500, batch_size=32):
                 if num % 100 == 0 and num > 0:
                     print(loss, flush=True)
 
-            sample_start_char = random.randint(65, 90)
-            sample_sequence = [sample_start_char]
-            for _ in range(sample_length):
-                feed = {"inputs:0":[sample_sequence]}
-                logits = sess.run("logits:0", feed_dict=feed)
-                next_char = np.random.choice(len(logits[0][-1]), p=logits[0][-1])
-                sample_sequence.append(next_char)
-            print("\nsample softmax:", ''.join([chr(s) for s in sample_sequence]))
+            print(sample(sess, sample_length))
             print("\nepoch:", epoch)
             print("loss:", np.mean(avg_loss), flush=True)
             avg_loss = []
