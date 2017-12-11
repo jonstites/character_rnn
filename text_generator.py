@@ -58,91 +58,85 @@ def sequence_to_label(sequence):
 def pad_ascii(seq, sequence_length):
     return seq + [0]*(sequence_length - len(seq))
 
-    
+def build_graph(embedding=True):
+    alpha_size = 256
+    embedding_size = 50
+    rnn_size = 40
+    # batch, seq, alpha
+    g = tf.Graph()
+    with g.as_default():
+        char_integers = tf.placeholder(tf.int32, shape=[None, None], name="inputs")
+        if embedding:
+            embeddings = tf.get_variable(
+                "char_embeddings",
+                [alpha_size, embedding_size])
 
-def main(train_text):
+            sequence = tf.nn.embedding_lookup(embeddings, char_integers)
+        else:
+            sequence = tf.one_hot(char_integers, alpha_size)    
+
+        label_integers= tf.placeholder(tf.int32, shape=[None, None], name="labels")
+        sequence_labels = tf.one_hot(label_integers, alpha_size)
+    
+        h1 = tf.nn.rnn_cell.GRUCell(num_units=rnn_size)
+        h2 = tf.nn.rnn_cell.GRUCell(num_units=rnn_size)
+        cell = tf.nn.rnn_cell.MultiRNNCell([h1, h2])
+
+        outputs, states = tf.nn.dynamic_rnn(
+            cell=cell,
+            dtype=tf.float32,
+            inputs=sequence)
+
+        outputs_flat = tf.reshape(outputs, [-1, rnn_size])
+        logits = tf.contrib.layers.linear(outputs_flat, alpha_size)     # [ BATCHSIZE x SEQLEN, ALPHASIZE ]
+        _ = tf.nn.softmax(logits, name="logits")
+        
+        Yflat_ = tf.reshape(sequence_labels, [-1, alpha_size])     # [ BATCHSIZE x SEQLEN, ALPHASIZE ]
+
+        loss = tf.reduce_mean(tf.nn.softmax_cross_entropy_with_logits(logits=logits, labels=Yflat_)) # [ BATCHSIZE x SEQLEN ]
+        loss_tensor = tf.identity(loss, name="loss")
+        optimizer = tf.train.AdamOptimizer().minimize(loss, name="optimizer")
+        return g
+
+def main(train_text, sequence_length=100, sample_length=500, batch_size=32):
     
     tf.reset_default_graph()
 
     # Create input data
-    batch_size=16
+    graph = build_graph()
+    with tf.Session(graph=graph) as sess:
+        sess.run(tf.global_variables_initializer())
 
-    alpha_size = 256
-
-    # batch, seq, alpha
-    pre_X = tf.placeholder(tf.int32, shape=[None, None])
-    X = tf.one_hot(pre_X, alpha_size)
-
-    pre_labels = tf.placeholder(tf.int32, shape=[None, None])
-    labels = tf.one_hot(pre_labels, alpha_size)
-
-    cell1 = tf.nn.rnn_cell.GRUCell(num_units=alpha_size)
-    cell2 = tf.nn.rnn_cell.GRUCell(num_units=alpha_size)
-    cell = tf.nn.rnn_cell.MultiRNNCell([cell1, cell2])
-
-    outputs, states = tf.nn.dynamic_rnn(
-        cell=cell,
-        dtype=tf.float32,
-        inputs=X)
-    #outputs = tf.contrib.layers.batch_norm(pre_outputs)
-    outputs_flat = tf.reshape(outputs, [-1, alpha_size])
-    Ylogits = tf.contrib.layers.linear(outputs_flat, alpha_size)     # [ BATCHSIZE x SEQLEN, ALPHASIZE ]
-    logits = Ylogits
-    soft_logits = tf.nn.softmax(logits)
-    Yflat_ = tf.reshape(labels, [-1, alpha_size])     # [ BATCHSIZE x SEQLEN, ALPHASIZE ]
-    print("yflat", Yflat_)
-    print("logits", logits)
-    loss = tf.reduce_mean(tf.nn.softmax_cross_entropy_with_logits(logits=Ylogits, labels=Yflat_))  # [ BATCHSIZE x SEQLEN ]
-    
-    print(logits)
-
-    optimizer = tf.train.AdamOptimizer().minimize(loss)
-
-
-    sess = tf.Session()
-    sess.run(tf.global_variables_initializer())
-
-
-    sequence_length = 100
-    batch_size = 16
-
-    for epoch in range(100):
-        avg_loss = []
-        for num, batch in enumerate(get_random_batch(train_text, sequence_length=sequence_length, batch_size=batch_size)):
+        for epoch in range(100):
+            avg_loss = []
+            for num, batch in enumerate(get_random_batch(train_text, sequence_length=sequence_length, batch_size=batch_size)):
             
-            output_labels, input_sequences = batch_to_labels(batch)
-
-            the_loss, _, the_logits, the_labels, the_outputs = sess.run([loss, optimizer, logits, labels, Yflat_], feed_dict={pre_X:input_sequences, pre_labels:output_labels})
-            real_logits = np.reshape(the_logits, (len(batch), sequence_length, alpha_size))
-            avg_loss.append(the_loss)
-
-            if num % 500 == 0 and num > 0:
-                print(".", end="", flush=True)
-
-        sample_start_char = random.randint(65, 90)
-        sample_sequence = [sample_start_char]
-        for _ in range(300):
-            feed = {pre_X: [sample_sequence]}
-            the_logits = sess.run(logits, feed_dict=feed)
-            next_char = np.argmax(the_logits[-1])
-            sample_sequence.append(next_char)
-        print("\nsample max:", ''.join([chr(s) for s in sample_sequence]))
-
-        sample_start_char = random.randint(65, 90)
-        sample_sequence = [sample_start_char]
-        for _ in range(300):
-            feed = {pre_X: [sample_sequence]}
-            the_logits = sess.run(soft_logits, feed_dict=feed)
-            next_char = np.random.choice(alpha_size, p=the_logits[-1])
-            sample_sequence.append(next_char)
-        print("\nsample softmax:", ''.join([chr(s) for s in sample_sequence]))
-
-
+                output_labels, input_sequences = batch_to_labels(batch)
                 
-        print("\nepoch:", epoch)
-        print("loss:", np.mean(avg_loss))
-        avg_loss = []
+                feed = {"inputs:0":input_sequences, "labels:0":output_labels}
+                loss, _ = sess.run(["loss:0", "optimizer"], feed_dict=feed)
+                avg_loss.append(loss)
 
+                if num % 100 == 0 and num > 0:
+                    print(".", end="", flush=True)
+
+            sample_start_char = random.randint(65, 90)
+            sample_sequence = [sample_start_char]
+            #sample_sequence = []
+            for _ in range(sample_length):
+                feed = {"inputs:0":[sample_sequence]}
+                logits = sess.run("logits:0", feed_dict=feed)
+                next_char = np.random.choice(len(logits[-1]), p=logits[-1])
+                sample_sequence.append(next_char)
+            print("\nsample softmax:", ''.join([chr(s) for s in sample_sequence]))
+            print("\nepoch:", epoch)
+            print("loss:", np.mean(avg_loss))
+            avg_loss = []
+
+
+    print("\nepoch:", epoch)
+    print("loss:", np.mean(avg_loss))
+    avg_loss = []
         
             
                     
