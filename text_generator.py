@@ -87,13 +87,9 @@ def build_graph(embedding=True):
             dtype=tf.float32,
             inputs=sequence)
 
-        outputs_flat = tf.reshape(outputs, [-1, rnn_size])
-        logits = tf.contrib.layers.linear(outputs_flat, alpha_size)     # [ BATCHSIZE x SEQLEN, ALPHASIZE ]
+        logits = tf.contrib.layers.linear(outputs, alpha_size)
         _ = tf.nn.softmax(logits, name="logits")
-        
-        Yflat_ = tf.reshape(sequence_labels, [-1, alpha_size])     # [ BATCHSIZE x SEQLEN, ALPHASIZE ]
-
-        loss = tf.reduce_mean(tf.nn.softmax_cross_entropy_with_logits(logits=logits, labels=Yflat_)) # [ BATCHSIZE x SEQLEN ]
+        loss = tf.reduce_mean(tf.nn.softmax_cross_entropy_with_logits(logits=logits, labels=sequence_labels))
         loss_tensor = tf.identity(loss, name="loss")
         optimizer = tf.train.AdamOptimizer().minimize(loss, name="optimizer")
         return g
@@ -118,7 +114,7 @@ def main(train_text, sequence_length=100, sample_length=500, batch_size=32):
                 avg_loss.append(loss)
 
                 if num % 100 == 0 and num > 0:
-                    print(".", end="", flush=True)
+                    print(loss, flush=True)
 
             sample_start_char = random.randint(65, 90)
             sample_sequence = [sample_start_char]
