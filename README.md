@@ -1,0 +1,1 @@
+A character-by-character text generator using an RNN.
