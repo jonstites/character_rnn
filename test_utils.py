@@ -123,6 +123,7 @@ class TestDataset:
     def test_train_val_test_split(self, tmpdir):
         dataset = small_dataset(tmpdir)
         dataset.load_files()
+        dataset.create_vocabulary()
         dataset.train_val_test_split(test_fraction=0.0, sequence_length=1)
 
         assert len(dataset.validation_batches) == 1

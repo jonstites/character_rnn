@@ -46,12 +46,14 @@ class Text:
         counts[""] = 0
         return counts
 
-    def chunk(text, sequence_length):
+    def chunk(text, sequence_length, pad=None):
         chunks = []
         for start in range(0, len(text), sequence_length):
             chunk = text[start: start + sequence_length]
             if len(chunk) < sequence_length:
                 break
+            if pad:
+                chunk = [pad] + chunk
             chunks.append(chunk)
         return chunks
         
@@ -87,6 +89,7 @@ class Dataset:
         
     def create_vocabulary(self):
         self.vocabulary = Text._texts_to_ids(self.texts)
+        self.inverse_vocabulary = dict(zip(self.vocabulary.values(), self.vocabulary.keys()))
         self.texts = Text.to_ids(self.texts, self.vocabulary)
     
     def train_val_test_split(self, val_fraction=0.1, test_fraction=0.1, sequence_length=100):
@@ -94,7 +97,7 @@ class Dataset:
         sources = []
         truncated_sequence = 0
         for source, text in zip(self.sources, self.texts):
-            chunks = Text.chunk(text, sequence_length)
+            chunks = Text.chunk(text, sequence_length, pad=self.vocabulary[""])
             batches += chunks
             truncated_sequence += len(text) % sequence_length
             sources += [source] * len(chunks)
@@ -110,16 +113,16 @@ class Dataset:
 
 
         # convert to np here?
-        self.validation_batches = batches[:num_val]
-        self.validation_sources = sources[:num_val]
-        self.test_batches = batches[num_val:num_val+num_test]
-        self.test_sources = sources[num_val:num_val+num_test]
-        self.train_batches = batches[num_val+num_test:]
-        self.train_sources = sources[num_val+num_test:]        
+        self.validation_batches = np.asarray(batches[:num_val])
+        self.validation_sources = np.asarray(sources[:num_val])
+        self.test_batches = np.asarray(batches[num_val:num_val+num_test])
+        self.test_sources = np.asarray(sources[num_val:num_val+num_test])
+        self.train_batches = np.asarray(batches[num_val+num_test:])
+        self.train_sources = np.asarray(sources[num_val+num_test:])
 
-def epoch_batches_sequence(batches, sources, epoch, batch_size=128):
+def batches(batches, sources, batch_size=128):
 
-    seed = epoch
+    seed = 0
 
     if len(batches) < batch_size:
         print("not enough batches for batch size")
@@ -136,4 +139,6 @@ def epoch_batches_sequence(batches, sources, epoch, batch_size=128):
             if len(batch) != batch_size:
                 break
             source = sources[start: start + batch_size]
-            yield batch, source
+            yield batch[:-1], batch[1:], source
+                
+        seed += 1

@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 
+from character_rnn import utils
 import argh
 import json
 import numpy as np
@@ -57,29 +58,19 @@ def sequence_to_label(sequence):
 def pad_ascii(seq, sequence_length):
     return seq + [0]*(sequence_length - len(seq))
 
-def build_graph(embedding=True, rnn_size=250):
-    alpha_size = 256
-    embedding_size = 50
+def build_graph(embedding=True, rnn_size=250, alpha_size=256, num_layers=1):
+
 
     g = tf.Graph()
     with g.as_default():
         # batch, seq, alpha        
         char_integers = tf.placeholder(tf.int32, shape=[None, None], name="inputs")
-        if embedding:
-            embeddings = tf.get_variable(
-                "char_embeddings",
-                [alpha_size, embedding_size])
-
-            sequence = tf.nn.embedding_lookup(embeddings, char_integers)
-        else:
-            sequence = tf.one_hot(char_integers, alpha_size)    
+        sequence = tf.one_hot(char_integers, alpha_size)    
 
         label_integers= tf.placeholder(tf.int32, shape=[None, None], name="labels")
         sequence_labels = tf.one_hot(label_integers, alpha_size)
-    
-        h1 = tf.nn.rnn_cell.GRUCell(num_units=rnn_size)
-        h2 = tf.nn.rnn_cell.GRUCell(num_units=rnn_size)
-        cell = tf.nn.rnn_cell.MultiRNNCell([h1, h2])
+
+        cell = tf.nn.rnn_cell.MultiRNNCell([tf.nn.rnn_cell.GRUCell(num_units=rnn_size) for _ in range(num_layers)])
 
         outputs, states = tf.nn.dynamic_rnn(
             cell=cell,
@@ -93,47 +84,54 @@ def build_graph(embedding=True, rnn_size=250):
         optimizer = tf.train.AdamOptimizer().minimize(loss, name="optimizer")
         return g
 
-def sample(sess, sample_length):
-    sample_start_char = random.randint(65, 90)
+def sample(sess, sample_length, vocabulary, start):
+    sample_start_char = start
     sample_sequence = [sample_start_char]
     for _ in range(sample_length):
         feed = {"inputs:0":[sample_sequence]}
         logits = sess.run("logits:0", feed_dict=feed)
         next_char = np.random.choice(len(logits[0][-1]), p=logits[0][-1])
         sample_sequence.append(next_char)
-    return ''.join([chr(s) for s in sample_sequence])
+    return ''.join([vocabulary[s] for s in sample_sequence])
     
-def main(train_text, sequence_length=100, sample_length=500, batch_size=32, rnn_size=250):
+def main(train_text, sequence_length=100, batch_size=32, rnn_size=128, num_layers=2):
     
     tf.reset_default_graph()
 
-    text = load_integer_text(train_text)
+    dataset = utils.Dataset()
+    dataset.add_file(train_text)
+    dataset.preprocess()
+    
     # Create input data
-    graph = build_graph(rnn_size=rnn_size)
+    graph = build_graph(rnn_size=rnn_size, alpha_size=len(dataset.vocabulary.keys()), num_layers=num_layers)
     with tf.Session(graph=graph) as sess:
         sess.run(tf.global_variables_initializer())
+        train_batch_generator = utils.batches(dataset.train_batches, dataset.train_sources)
+        val_batch_generator = utils.batches(dataset.validation_batches, dataset.validation_sources)        
+        for iteration in range(10000):
 
-        for epoch in range(100):
-            avg_loss = []
-            for num, batch in enumerate(get_random_batch(text, sequence_length=sequence_length, batch_size=batch_size)):
-            
-                output_labels, input_sequences = batch_to_labels(batch)
-                
-                feed = {"inputs:0":input_sequences, "labels:0":output_labels}
-                loss, _ = sess.run(["loss:0", "optimizer"], feed_dict=feed)
-                avg_loss.append(loss)
+            batch_inputs, batch_labels, authors = next(train_batch_generator)
+            feed = {"inputs:0":batch_inputs, "labels:0":batch_labels}
+            loss, _ = sess.run(["loss:0", "optimizer"], feed_dict=feed)
 
-                if num % 100 == 0 and num > 0:
-                    print(loss, flush=True)
+            if iteration % 100 == 0:
+                print(loss, flush=True)
 
-            print(sample(sess, sample_length))
-            print("\nepoch:", epoch)
-            print("loss:", np.mean(avg_loss), flush=True)
-            avg_loss = []
+            if iteration % 1000 == 0:
+                print("iteration: {0}".format(iteration))
+                print(sample(sess, 500, dataset.inverse_vocabulary, start=dataset.vocabulary[""]))
+
+                val_loss = []
+                for it in range(1000):
+                    batch_inputs, batch_labels, authors = next(val_batch_generator)
+                    feed = {"inputs:0":batch_inputs, "labels:0":batch_labels}
+                    loss = sess.run(["loss:0"], feed_dict=feed)
+                    val_loss.append(loss)
+                print("validation loss: ", np.mean(val_loss))
 
 
-    print("\nepoch:", epoch)
-    print("loss:", np.mean(avg_loss))
+    print("loss:", loss)
+    print(sample(sess, 500, dataset.inverse_vocabulary, start=dataset.vocabulary[""]))    
     avg_loss = []
         
             
