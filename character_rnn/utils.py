@@ -139,6 +139,6 @@ def batches(batches, sources, batch_size=128):
             if len(batch) != batch_size:
                 break
             source = sources[start: start + batch_size]
-            yield batch[:-1], batch[1:], source
+            yield [seq[:-1] for seq in batch], [seq[1:] for seq in batch], source
                 
         seed += 1
