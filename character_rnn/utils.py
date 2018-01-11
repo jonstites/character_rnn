@@ -1,144 +1,102 @@
 from collections import Counter
 import math
 import numpy as np
+import os
+import tensorflow as tf
+import random
 
 
-class Text:
+def _int64_feature(value):
+    return tf.train.Feature(int64_list=tf.train.Int64List(value=value))
 
-    def load_file(text_file):
-        with open(text_file) as handle:
-            return handle.read()
-    
-    def load_files(text_files):
-        texts = []
-        for text_file in text_files:
-            text = Text.load_file(text_file)
-            texts.append(text)
-        return texts
+def _bytes_feature(value):
+    return tf.train.Feature(bytes_list=tf.train.BytesList(value=value))
 
-    def to_ids(texts, ids):
-        as_ids = []
-        for text in texts:
-            as_id = [ids[char] for char in text]
-            as_ids.append(as_id)
-        return as_ids
-    
-    def _texts_to_ids(texts):
-        counts = Text._multi_count_characters(texts)
-        sorted_characters = Text._sort_keys_by_freq_and_lex(counts)
+
+class Vocabulary:
+
+    def __init__(self):
+        pass
+
+    def learn_vocabulary(self, files):
+        counts = self._get_character_counts(files)
+        self.vocabulary = self._create_ids(counts)
+        self.inverse_vocabulary = dict(zip(self.vocabulary.values(), self.vocabulary.keys()))
+
+    def _create_ids(self, counts):
+        sorted_characters = self._sort_keys_by_freq_and_lex(counts)
         character_ids = {}
         for index, character in enumerate(sorted_characters):
             character_ids[character] = index
-        return character_ids
+        return character_ids        
+        
+    def _sort_keys_by_freq_and_lex(self, counts):
+        return sorted(counts.keys(), key=lambda x: (-counts[x], x))        
 
-    def _sort_keys_by_freq_and_lex(counts):
-        return sorted(counts.keys(), key=lambda x: (-counts[x], x))
-    
-    def _count_characters(text):
-        counts = Counter(text)
-        counts[""] = 0        
-        return counts
-
-    def _multi_count_characters(texts):
+    def _get_character_counts(self, files):
         counts = Counter()
-        for text in texts:
-            counts.update(text)
-        counts[""] = 0
+        for filename in files:
+            text = self.load_file(filename)
+            count = Counter(text)
+            counts.update(count)
         return counts
 
-    def chunk(text, sequence_length, pad=None):
-        chunks = []
-        for start in range(0, len(text), sequence_length):
-            chunk = text[start: start + sequence_length]
-            if len(chunk) < sequence_length:
-                break
-            if pad:
-                chunk = [pad] + chunk
-            chunks.append(chunk)
-        return chunks
-        
+    def load_file(self, text_file):
+        with open(text_file) as handle:
+            return handle.read()
     
-class Dataset:
 
-    def __init__(self):
-        self.files = []
-        self.sources = []
-        self.texts = []
+class RecordWriter:
 
-    def add_file(self, filename, source=None):
-        self.files.append(filename)
-        self.sources.append(source)
-
-    def add_files(self, filenames, sources=None):
-        if sources is None:
-            sources = [None for _ in len(filenames)]
+    def __init__(self, output_dir, vocabulary, chunk_size=1000):
+        self.output_dir = output_dir
+        self.chunk_size = chunk_size
+        self.validation_fraction = 0.1
+        self.test_fraction = 0.1
+        self.vocabulary = vocabulary
         
-        assert len(filenames) == len(sources)
+    def process(self, files):
+        train_file = os.path.join(self.output_dir, "train.tfrecords")
+        validation_file = os.path.join(self.output_dir, "validation.tfrecords")
+        test_file = os.path.join(self.output_dir, "test.tfrecords")
+        
+        with tf.python_io.TFRecordWriter(train_file) as train_handle,\
+             tf.python_io.TFRecordWriter(validation_file) as validation_handle,\
+             tf.python_io.TFRecordWriter(test_file) as test_handle:
+                    
+            for chunk in self.read_files(files):
+                converted_chunk = self.convert(chunk)
+                record = self.create_tf_record(converted_chunk)
+                handle = self.choose_handle(train_handle, validation_handle, test_handle)
+                handle.write(record.SerializeToString())
 
-        for filename, source in zip(filenames, sources):
-            self.add_file(filename, source)        
+    def choose_handle(self, train_handle, validation_handle, test_handle):
+        handle = train_handle
+        random_value = random.random()
+        if random_value < self.test_fraction:
+            handle = test_handle
+        elif random_value < (self.validation_fraction + self.test_fraction):
+            handle = validation_handle
+        return handle
+    
+    def create_tf_record(self, chunk):
+        record = tf.train.Example(features=tf.train.Features(feature={
+            "sequence": _int64_feature(chunk)}))            
+        return record
 
-    def preprocess(self):
-        self.load_files()
-        self.create_vocabulary()
-        self.train_val_test_split()
+    def read_files(self, files):
+        truncated = 0
+        chunk_size = self.chunk_size
+        for filename in files:
+            with open(filename, 'r', encoding="utf-8") as file_handle:
+                text = file_handle.read()
+                for start in range(0, len(text) - chunk_size, chunk_size):
+                    end = start + chunk_size
+                    yield text[start: end]
+                truncated += len(text) % chunk_size
+        print("Truncated ", truncated, " characters due to chunk size.")
+
             
-    def load_files(self):
-        texts = Text.load_files(self.files)
-        self.texts = texts
-        
-    def create_vocabulary(self):
-        self.vocabulary = Text._texts_to_ids(self.texts)
-        self.inverse_vocabulary = dict(zip(self.vocabulary.values(), self.vocabulary.keys()))
-        self.texts = Text.to_ids(self.texts, self.vocabulary)
-    
-    def train_val_test_split(self, val_fraction=0.1, test_fraction=0.1, sequence_length=100):
-        batches = []
-        sources = []
-        truncated_sequence = 0
-        for source, text in zip(self.sources, self.texts):
-            chunks = Text.chunk(text, sequence_length, pad=self.vocabulary[""])
-            batches += chunks
-            truncated_sequence += len(text) % sequence_length
-            sources += [source] * len(chunks)
-            
-        print("Truncated ", truncated_sequence, " characters.")
-        np.random.seed(0)
-        np.random.shuffle(batches)
-        np.random.seed(0)
-        np.random.shuffle(sources)
+    def convert(self, chunk):
+        return [self.vocabulary[char] for char in chunk]
 
-        num_val = math.ceil(len(batches) * val_fraction)
-        num_test = math.ceil(len(batches) * test_fraction)
-
-
-        # convert to np here?
-        self.validation_batches = np.asarray(batches[:num_val])
-        self.validation_sources = np.asarray(sources[:num_val])
-        self.test_batches = np.asarray(batches[num_val:num_val+num_test])
-        self.test_sources = np.asarray(sources[num_val:num_val+num_test])
-        self.train_batches = np.asarray(batches[num_val+num_test:])
-        self.train_sources = np.asarray(sources[num_val+num_test:])
-
-def batches(batches, sources, batch_size=128):
-
-    seed = 0
-
-    if len(batches) < batch_size:
-        print("not enough batches for batch size")
-        return
-    
-    while True:
-        np.random.seed(seed)
-        np.random.shuffle(batches)
-        np.random.seed(seed)
-        np.random.shuffle(sources)
-
-        for start in range(0, len(batches), batch_size):
-            batch = batches[start: start + batch_size]
-            if len(batch) != batch_size:
-                break
-            source = sources[start: start + batch_size]
-            yield [seq[:-1] for seq in batch], [seq[1:] for seq in batch], source
-                
-        seed += 1
