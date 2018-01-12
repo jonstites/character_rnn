@@ -1,4 +1,5 @@
 from collections import Counter
+import json
 import math
 import numpy as np
 import os
@@ -16,7 +17,8 @@ def _bytes_feature(value):
 class Vocabulary:
 
     def __init__(self):
-        pass
+        self.vocabulary = {}
+        self.inverse_vocabulary = {}
 
     def learn_vocabulary(self, files):
         counts = self._get_character_counts(files)
@@ -42,20 +44,27 @@ class Vocabulary:
         return counts
 
     def load_file(self, text_file):
-        with open(text_file) as handle:
+        with open(text_file, encoding="utf-8") as handle:
             return handle.read()
-    
+        
 
 class RecordWriter:
 
-    def __init__(self, output_dir, vocabulary, chunk_size=1000):
+    def __init__(self, output_dir, vocabulary):
         self.output_dir = output_dir
-        self.chunk_size = chunk_size
+        self.vocabulary = vocabulary
+        self.chunk_size = 1000
         self.validation_fraction = 0.1
         self.test_fraction = 0.1
-        self.vocabulary = vocabulary
+
+    def dump_vocabulary(self):
+        vocab_file = os.path.join(self.output_dir, "vocabulary.json")
+        with open(vocab_file, 'w', encoding="utf-8") as handle:
+            json.dump(self.vocabulary, handle)
         
     def process(self, files):
+        if not os.path.exists(self.output_dir):
+            os.makedirs(self.output_dir)
         train_file = os.path.join(self.output_dir, "train.tfrecords")
         validation_file = os.path.join(self.output_dir, "validation.tfrecords")
         test_file = os.path.join(self.output_dir, "test.tfrecords")
@@ -95,7 +104,6 @@ class RecordWriter:
                     yield text[start: end]
                 truncated += len(text) % chunk_size
         print("Truncated ", truncated, " characters due to chunk size.")
-
             
     def convert(self, chunk):
         return [self.vocabulary[char] for char in chunk]
