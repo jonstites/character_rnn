@@ -6,8 +6,8 @@ import math
 import os
 from . import utils
 
-class Embedding:
 
+class Embedding:
 
     def __parse__function(record, chunk_size):
         features = {"sequence": tf.FixedLenFeature(shape=chunk_size, dtype=tf.int64)}
@@ -49,9 +49,10 @@ class Embedding:
         iterator = tf.data.Iterator.from_string_handle(
             handle, train_dataset.output_types, train_dataset.output_shapes)
         next_element = iterator.get_next()
-        characters, contexts = next_element
-        contexts = tf.reshape(contexts, shape=(-1, 1))
-
+        characters, pre_contexts = next_element
+        contexts = tf.reshape(pre_contexts, shape=(-1, 1))
+        print(characters)
+        print(pre_contexts)
         embeddings = tf.Variable(
             tf.random_uniform([vocabulary_size, embedding_size], -1.0, 1.0))
 
@@ -73,6 +74,12 @@ class Embedding:
         
         optimizer = tf.train.GradientDescentOptimizer(learning_rate=1.0).minimize(loss)
 
+        logits = tf.matmul(embed, tf.transpose(nce_weights)) + nce_biases
+
+        labels_one_hot = tf.one_hot(pre_contexts, vocabulary_size)
+
+        correct_prediction = tf.equal(tf.argmax(logits, 1), tf.argmax(labels_one_hot, 1))
+        
         train_iterator = train_dataset.make_initializable_iterator()
         validation_iterator = validation_dataset.make_initializable_iterator()
 
@@ -99,29 +106,34 @@ class Embedding:
         training_handle = sess.run(train_iterator.string_handle())
         validation_handle = sess.run(validation_iterator.string_handle())
         
-        num_epochs = 10
+        num_epochs = 100
         for epoch in range(num_epochs):
             sess.run(train_iterator.initializer)
             losses = []
-        
+
             while True:
 
                 try:
                     loss_value, _ = sess.run([loss, optimizer], feed_dict={handle: training_handle, is_training: True})
                     losses.append(loss_value)
+
                 except tf.errors.OutOfRangeError:
                     print("train loss: ", np.mean(losses))
+
                     break
         
             # Run one pass over the validation dataset.
             sess.run(validation_iterator.initializer)
             losses = []
+            predictions = []
             while True:
                 try:
-                    val_loss = sess.run(loss, feed_dict={handle: validation_handle, is_training: False})
+                    val_loss, p = sess.run([loss, correct_prediction], feed_dict={handle: validation_handle, is_training: False})
                     losses.append(val_loss)
+                    predictions.append(np.mean(p))
                 except tf.errors.OutOfRangeError:
                     print("val loss: ", np.mean(losses))
+                    print("val accuracy: ", np.mean(predictions))
                     break
         
             saver = tf.train.Saver()
