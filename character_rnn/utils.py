@@ -19,12 +19,18 @@ class Vocabulary:
     def __init__(self):
         self.vocabulary = {}
         self.inverse_vocabulary = {}
+        self.size = 0
 
+    def set_vocabulary(self, vocabulary):
+        self.vocabulary = vocabulary
+        self.inverse_vocabulary = dict(zip(self.vocabulary.values(), self.vocabulary.keys()))
+        self.size = len(self.vocabulary.keys())
+        
     def learn_vocabulary(self, files):
         counts = self._get_character_counts(files)
-        self.vocabulary = self._create_ids(counts)
-        self.inverse_vocabulary = dict(zip(self.vocabulary.values(), self.vocabulary.keys()))
-
+        vocabulary = self._create_ids(counts)
+        self.set_vocabulary(vocabulary)
+        
     def _create_ids(self, counts):
         sorted_characters = self._sort_keys_by_freq_and_lex(counts)
         character_ids = {}
@@ -46,7 +52,13 @@ class Vocabulary:
     def load_file(self, text_file):
         with open(text_file, encoding="utf-8") as handle:
             return handle.read()
-        
+
+    def load_from_file(vocabulary_file):
+        v = Vocabulary()
+        with open(vocabulary_file) as handle:
+            vocabulary = json.load(handle)
+        v.set_vocabulary(vocabulary)
+        return v
 
 class RecordWriter:
 
