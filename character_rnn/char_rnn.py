@@ -19,8 +19,10 @@ def preprocess(filenames, output_dir=None):
 def create_embedding(train_filenames, validation_filenames, vocabulary_file, output_dir=None, chunk_size=1000, embedding_size=10):
     networks.Embedding.create_embedding(train_filenames, validation_filenames, vocabulary_file, output_dir, chunk_size=chunk_size, embedding_size=embedding_size)
 
+def create_text_generator(train_filenames, validation_filenames, vocabulary_file, embedding_model_file, output_dir=None, chunk_size=1000, embedding_size=10):
+    networks.TextGenerator.create_text_generator(train_filenames, validation_filenames, vocabulary_file, embedding_model_file, output_dir, chunk_size=chunk_size, embedding_size=embedding_size)
 
 if __name__ == "__main__":
     parser = argh.ArghParser()
-    parser.add_commands([preprocess, create_embedding])
+    parser.add_commands([preprocess, create_embedding, create_text_generator])
     parser.dispatch()
