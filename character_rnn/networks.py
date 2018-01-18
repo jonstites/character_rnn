@@ -151,7 +151,7 @@ class TextGenerator:
         
         dataset = tf.data.TFRecordDataset(filenames)
         dataset = dataset.map(parse_function)
-        dataset = dataset.map(pad_sequence)
+        #dataset = dataset.map(pad_sequence)
         dataset = dataset.map(random_crop)
         #dataset = dataset.map(embedding_lookup)
         dataset = dataset.repeat(None)
