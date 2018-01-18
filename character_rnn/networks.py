@@ -15,12 +15,10 @@ class Embedding:
         return parsed_features["sequence"]
 
     def __choose_random_context(record, chunk_size):
-        index = np.random.randint(chunk_size - 1)
-        character = record[index]
-
-        # reshape context here
-        context = record[index + 1]
-        return character, context
+        cropped = tf.random_crop(record, [10])
+        character = tf.slice(cropped, [8], [1])
+        next_character = tf.slice(cropped, [9], [1])
+        return tf.reshape(cropped, shape=[10]), tf.reshape(character, shape=[]), tf.reshape(next_character, shape=[])
 
     def make_dataset(filenames, batch_size, chunk_size):
         parse_function = partial(Embedding.__parse__function, chunk_size=chunk_size)
@@ -28,14 +26,14 @@ class Embedding:
         dataset = tf.data.TFRecordDataset(filenames)
         dataset = dataset.map(parse_function)
         dataset = dataset.map(choose_random_context)
-        dataset = dataset.repeat(None)
         dataset = dataset.shuffle(buffer_size=batch_size * 5)
+        dataset = dataset.repeat(None)        
         dataset = dataset.batch(batch_size)
         return dataset
 
-    def create_embedding(train_filenames, validation_filenames, vocabulary_file, output_dir, chunk_size=1000, embedding_size=10, max_steps=10000):
-        batch_size = 64
-        num_sampled = 10
+    def create_embedding(train_filenames, validation_filenames, vocabulary_file, output_dir, chunk_size=1000, embedding_size=10, max_steps=200000):
+        batch_size = 256
+        num_sampled = 2
     
         train_dataset = Embedding.make_dataset(train_filenames, batch_size, chunk_size)
         train_iterator = train_dataset.make_initializable_iterator()
@@ -55,7 +53,7 @@ class Embedding:
             iterator = tf.data.Iterator.from_string_handle(
                 handle, train_dataset.output_types, train_dataset.output_shapes)
             next_element = iterator.get_next()
-            characters, pre_contexts = next_element
+            cropped, characters, pre_contexts = next_element
             contexts = tf.reshape(pre_contexts, shape=(-1, 1))
 
         with tf.name_scope("Model"):
@@ -107,8 +105,11 @@ class Embedding:
 
         for step in range(1, max_steps+1):
             if step % 10 == 0:
-                summary = sess.run(summaries_tensor, feed_dict={handle: validation_handle})
+                summary, crop, chars, next_chars = sess.run([summaries_tensor, cropped, characters, pre_contexts], feed_dict={handle: validation_handle})
                 validation_writer.add_summary(summary, global_step=step)
+                #for i in range(batch_size):
+                #    print("".join(vocabulary.inverse_vocabulary[j] for j in crop[i]), vocabulary.inverse_vocabulary[chars[i]], vocabulary.inverse_vocabulary[next_chars[i]])
+                
             else:
                 _, summary = sess.run([optimizer, summaries_tensor], feed_dict={handle: training_handle})
                 train_writer.add_summary(summary, global_step=step)                
@@ -136,15 +137,14 @@ class TextGenerator:
         return tf.pad(sequence, paddings, "CONSTANT")
 
     def __random_crop(sequence, sequence_length):
-        padded_chunk_size = sequence.get_shape().as_list()[0]
-        random_start = np.random.randint(0, padded_chunk_size - sequence_length)
-        random_crop = sequence[random_start: random_start + sequence_length]
-        label = sequence[random_start + sequence_length]
-        return random_crop, label
+        cropped = tf.random_crop(sequence, [sequence_length+1])
+        cropped_sequence = tf.slice(cropped, [0], [sequence_length])
+        label = tf.slice(cropped, [sequence_length], [1])
+        return cropped_sequence, tf.reshape(label, shape=[])
     
-    def make_dataset(filenames, embeddings, sequence_length, embedding_size, batch_size, chunk_size):
+    def make_dataset(filenames,  sequence_length, batch_size, chunk_size):
         parse_function = partial(TextGenerator.__parse__function, chunk_size=chunk_size)
-        embedding_lookup = partial(TextGenerator.__embedding_lookup, embeddings=embeddings)
+        #embedding_lookup = partial(TextGenerator.__embedding_lookup, embeddings=embeddings)
         pad_sequence = partial(TextGenerator.__pad_sequence, sequence_length=sequence_length)
         random_crop = partial(TextGenerator.__random_crop,
             sequence_length=sequence_length)
@@ -153,7 +153,7 @@ class TextGenerator:
         dataset = dataset.map(parse_function)
         dataset = dataset.map(pad_sequence)
         dataset = dataset.map(random_crop)
-        dataset = dataset.map(embedding_lookup)
+        #dataset = dataset.map(embedding_lookup)
         dataset = dataset.repeat(None)
         dataset = dataset.shuffle(buffer_size=batch_size * 5)
         dataset = dataset.batch(batch_size)
@@ -178,33 +178,26 @@ class TextGenerator:
         while len(text) < sequence_length:
             embedded_text = tf.nn.embedding_lookup(embedding, text, name="lookup")
             seq_len, _ = embedded_text.shape
-            tf.pad(embedded_text, [[sequence_length
+
             next_char = sess.run(closest_characters, feed_dict={embedded_sequences: embedded_text.eval(session=sess), is_sampling:True, is_training:False})
             text.append(next_char)
         converted_text = "".join(vocabulary.inverse_vocabulary[s] for s in text)
         print(converted_text)
         
     def create_text_generator(train_filenames, validation_filenames, vocabulary_file,
-                              embedding_model_file,
-                              output_dir, chunk_size=1000, embedding_size=10, max_steps=2000,
+                              output_dir, chunk_size=1000, embedding_size=10, max_steps=200000,
                               sequence_length=100):
-        batch_size = 64
+        batch_size = 128
 
         vocabulary = utils.Vocabulary.load_from_file(vocabulary_file)
         vocabulary_size = vocabulary.size
 
-        with tf.name_scope("Model"):
-            pre_norm_embeddings = tf.Variable(
-                tf.contrib.framework.load_variable(embedding_model_file, "Model/embeddings"),
-                trainable=False, name="embeddings")
-
-            norm = tf.sqrt(tf.reduce_sum(tf.square(pre_norm_embeddings), 1, keep_dims=True))
-            embeddings = tf.identity(pre_norm_embeddings / norm, name="normed_embeddings")
             
-        train_dataset = TextGenerator.make_dataset(train_filenames, embeddings, sequence_length, embedding_size, batch_size, chunk_size)
+            
+        train_dataset = TextGenerator.make_dataset(train_filenames, sequence_length, batch_size, chunk_size)
         train_iterator = train_dataset.make_initializable_iterator()
 
-        validation_dataset = TextGenerator.make_dataset(validation_filenames, embeddings, sequence_length, embedding_size, batch_size, chunk_size)
+        validation_dataset = TextGenerator.make_dataset(validation_filenames, sequence_length, batch_size, chunk_size)
         validation_iterator = validation_dataset.make_initializable_iterator()    
 
         sess = tf.Session()        
@@ -212,31 +205,34 @@ class TextGenerator:
         validation_handle = sess.run(validation_iterator.string_handle())
 
         with tf.name_scope("Input"):
-            is_sampling = tf.placeholder(tf.bool, name="is_sampling")
             is_training = tf.placeholder(tf.bool, name="is_training")
             handle = tf.placeholder(tf.string, shape=[], name="handle")
             iterator = tf.data.Iterator.from_string_handle(
                 handle, train_dataset.output_types, train_dataset.output_shapes)
-            sequences, embedded_sequences, labels, embedded_labels = iterator.get_next()
-            embedded_sequences = tf.identity(tf.cond(is_sampling, lambda: tf.placeholder(tf.float32, shape=[None, sequence_length, embedding_size]), lambda: embedded_sequences), name="embedded_sequences")
-            #sequences, labels = iterator.get_next()
-            #sequences_oh = tf.one_hot(sequences, vocabulary_size)
+            #sequences, embedded_sequences, labels, embedded_labels = iterator.get_next()
+
+            sequences, labels = iterator.get_next()
+
+        with tf.name_scope("Embeddings"):
+            embeddings = tf.Variable(
+                tf.random_uniform([vocabulary_size, embedding_size], -1.0, 1.0), name="embeddings")
+            embedded_sequences = tf.nn.embedding_lookup(embeddings, sequences, name="lookup")        
             
 
         with tf.name_scope("Model"):
             conv = True
             if conv:
-                weights_regularizer=tf.contrib.layers.l2_regularizer(1.0)
-                h = tf.contrib.layers.conv2d(embedded_sequences, kernel_size=5, num_outputs=20, weights_regularizer=weights_regularizer, stride=2)
-                h = tf.contrib.layers.batch_norm(h, is_training=is_training, decay=0.9)
-                h = tf.contrib.layers.conv2d(h, kernel_size=5, num_outputs=40, weights_regularizer=weights_regularizer, stride=2)
-                h = tf.contrib.layers.batch_norm(h, is_training=is_training, decay=0.9)                
-                h = tf.contrib.layers.conv2d(h, kernel_size=5, num_outputs=60, weights_regularizer=weights_regularizer, stride=2)
-                h = tf.contrib.layers.batch_norm(h, is_training=is_training, decay=0.9)                
+                weights_regularizer=tf.contrib.layers.l2_regularizer(1e-4)
+                h = tf.contrib.layers.conv2d(embedded_sequences, kernel_size=5, num_outputs=40, weights_regularizer=weights_regularizer)
+                h = tf.contrib.layers.batch_norm(h, is_training=is_training)
                 h = tf.contrib.layers.conv2d(h, kernel_size=5, num_outputs=80, weights_regularizer=weights_regularizer, stride=2)
-                h = tf.contrib.layers.batch_norm(h, is_training=is_training, decay=0.9)
+                h = tf.contrib.layers.batch_norm(h, is_training=is_training)
+                h = tf.contrib.layers.conv2d(h, kernel_size=5, num_outputs=160, weights_regularizer=weights_regularizer, stride=2)
+                h = tf.contrib.layers.batch_norm(h, is_training=is_training)
+                h = tf.contrib.layers.conv2d(h, kernel_size=5, num_outputs=320, weights_regularizer=weights_regularizer, stride=2)
+                h = tf.contrib.layers.batch_norm(h, is_training=is_training)
                 h = tf.contrib.layers.flatten(h)
-                outputs = tf.identity(tf.contrib.layers.fully_connected(h, embedding_size, activation_fn=None), name="outputs")
+                outputs = tf.identity(tf.contrib.layers.fully_connected(h, vocabulary_size, activation_fn=None), name="outputs")
 
      
             else:
@@ -252,8 +248,12 @@ class TextGenerator:
                 outputs = tf.contrib.layers.linear(tf.contrib.layers.flatten(outputs), embedding_size)
 
         with tf.name_scope("Cost"):
-            loss = tf.identity(tf.losses.mean_squared_error(embedded_labels, outputs), name="loss")
-            #loss = tf.identity(tf.reduce_mean(tf.nn.sparse_softmax_cross_entropy_with_logits(logits=logits, labels=labels), name="loss"))
+
+            ml_loss = tf.identity(tf.reduce_mean(tf.nn.sparse_softmax_cross_entropy_with_logits(labels=labels, logits=outputs), name="ml_loss"))
+            tf.summary.scalar("ml_loss", ml_loss)
+            reg_loss = tf.reduce_sum(tf.get_collection(tf.GraphKeys.REGULARIZATION_LOSSES))
+            tf.summary.scalar("reg_loss", reg_loss)
+            loss = ml_loss + reg_loss
             tf.summary.scalar("loss", loss)
 
         with tf.name_scope("Train"):
@@ -263,10 +263,7 @@ class TextGenerator:
                 optimizer = tf.train.AdamOptimizer().minimize(loss, name="optimizer")
 
         with tf.name_scope("Accuracies"):
-            # should I norm the embeddings and outputs??
-            cosine_similarity = tf.matmul(outputs, embeddings, transpose_b=True, name="Cosine_Similarity")
-            closest_characters = tf.identity(tf.argmax(cosine_similarity, 1), "closest_characters")
-            accuracy = tf.reduce_mean(tf.cast(tf.equal(closest_characters, labels) , "float"), name="accuracy")
+            accuracy = tf.reduce_mean(tf.cast(tf.equal(tf.argmax(outputs, 1), labels) , "float"), name="accuracy")
             #accuracy = tf.reduce_mean(tf.cast(tf.equal(tf.argmax(logits, 1), labels) , "float"), name="accuracy")
             tf.summary.scalar("accuracy", accuracy)
             
@@ -281,24 +278,28 @@ class TextGenerator:
 
         for step in range(1, max_steps+1):
             if step % 10 == 0:
-                summary = sess.run( summaries_tensor, feed_dict={handle: validation_handle, is_training:False, is_sampling:False})
+                summary = sess.run( summaries_tensor, feed_dict={handle: validation_handle, is_training:False})
                 validation_writer.add_summary(summary, global_step=step)
+                """
+                seqq, predd, actt, cdd, summary = sess.run([sequences, closest_characters, labels, cosine_similarity, summaries_tensor], feed_dict={handle: validation_handle, is_training:False})
+
+                for i in range(batch_size):
+                    seq = seqq[i]
+                    act = actt[i]
+                    pred = predd[i]
+                    cd = cdd[i]
+                    print("seq: ", ''.join([vocabulary.inverse_vocabulary[s] for s in seq]), vocabulary.inverse_vocabulary[act], sep="")
+                    print("pred: ", vocabulary.inverse_vocabulary[pred])
+                    print("was correct: ", pred == act)
+                    #for i, distance in enumerate(cd):
+                    #print("cosine distance: ", distance, vocabulary.inverse_vocabulary[i])
+                """
             else:
-                _, summary = sess.run([optimizer, summaries_tensor], feed_dict={handle: training_handle, is_training:True, is_sampling:False})
+                _, summary = sess.run([optimizer, summaries_tensor], feed_dict={handle: training_handle, is_training:True})
                 train_writer.add_summary(summary, global_step=step)                
 
             if step % 1000 == 0:
-                """seq, pred, act, cd, summary, ll = sess.run([sequences, closest_characters, labels, cosine_distance, summaries_tensor, loss], feed_dict={handle: validation_handle, is_training:False})
-                seq = seq[0]
-                act = act[0]
-                pred = pred[0]
-                cd = cd[0]
-                print("seq: ", ''.join([vocabulary.inverse_vocabulary[s] for s in seq]), vocabulary.inverse_vocabulary[act], sep="")
-                print("pred: ", vocabulary.inverse_vocabulary[pred])
-                print("was correct: ", pred == act)
-                for i, distance in enumerate(cd):
-                    print("cosine distance: ", distance, vocabulary.inverse_vocabulary[i])
-                """
+                
                 saver = tf.train.Saver()
                 saver.save(sess, os.path.join(output_dir, "model.ckpt"), step)
 
