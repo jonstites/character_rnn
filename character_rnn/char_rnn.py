@@ -24,8 +24,8 @@ def create_text_generator(train_filenames, validation_filenames, vocabulary_file
     networks.TextGenerator.create_text_generator(train_filenames, validation_filenames, vocabulary_file, output_dir, chunk_size=chunk_size, sequence_length=sequence_length, embedding_size=embedding_size)
 
 
-def generate_text(vocabulary_file, model_file, embedding_size=10, sequence_length=100):
-    networks.TextGenerator.generate_text(vocabulary_file, model_file, embedding_size=embedding_size, sequence_length=sequence_length)
+def generate_text(vocabulary_file, model_file, embedding_size=10, sequence_length=100, conv=False):
+    networks.TextGenerator.generate_text(vocabulary_file, model_file, embedding_size=embedding_size, sequence_length=sequence_length, conv=conv)
     
 if __name__ == "__main__":
     parser = argh.ArghParser()

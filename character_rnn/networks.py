@@ -136,18 +136,21 @@ class TextGenerator:
         paddings = tf.constant([[sequence_length, 0]])
         return tf.pad(sequence, paddings, "CONSTANT")
 
-    def __random_crop(sequence, sequence_length):
+    def __random_crop(sequence, sequence_length, conv):
         cropped = tf.random_crop(sequence, [sequence_length+1])
         cropped_sequence = tf.slice(cropped, [0], [sequence_length])
-        label = tf.slice(cropped, [sequence_length], [1])
-        return cropped_sequence, tf.reshape(label, shape=[])
+        if conv:
+            label = tf.reshape(tf.slice(cropped, [sequence_length], [1]), shape=[])
+        else:
+            label = tf.slice(cropped, [1], [sequence_length])
+        return cropped_sequence, label
     
-    def make_dataset(filenames,  sequence_length, batch_size, chunk_size):
+    def make_dataset(filenames,  sequence_length, batch_size, chunk_size, conv):
         parse_function = partial(TextGenerator.__parse__function, chunk_size=chunk_size)
         #embedding_lookup = partial(TextGenerator.__embedding_lookup, embeddings=embeddings)
-        pad_sequence = partial(TextGenerator.__pad_sequence, sequence_length=sequence_length)
+        #pad_sequence = partial(TextGenerator.__pad_sequence, sequence_length=sequence_length)
         random_crop = partial(TextGenerator.__random_crop,
-            sequence_length=sequence_length)
+                              sequence_length=sequence_length, conv=conv)
         
         dataset = tf.data.TFRecordDataset(filenames)
         dataset = dataset.map(parse_function)
@@ -185,19 +188,19 @@ class TextGenerator:
         print(converted_text)
         
     def create_text_generator(train_filenames, validation_filenames, vocabulary_file,
-                              output_dir, chunk_size=1000, embedding_size=10, max_steps=200000,
-                              sequence_length=100):
+                              output_dir, chunk_size=1000, embedding_size=10, max_steps=500000,
+                              sequence_length=100, conv=False):
         batch_size = 128
 
         vocabulary = utils.Vocabulary.load_from_file(vocabulary_file)
         vocabulary_size = vocabulary.size
 
             
-            
-        train_dataset = TextGenerator.make_dataset(train_filenames, sequence_length, batch_size, chunk_size)
+
+        train_dataset = TextGenerator.make_dataset(train_filenames, sequence_length, batch_size, chunk_size, conv)
         train_iterator = train_dataset.make_initializable_iterator()
 
-        validation_dataset = TextGenerator.make_dataset(validation_filenames, sequence_length, batch_size, chunk_size)
+        validation_dataset = TextGenerator.make_dataset(validation_filenames, sequence_length, batch_size, chunk_size, conv)
         validation_iterator = validation_dataset.make_initializable_iterator()    
 
         sess = tf.Session()        
@@ -218,12 +221,11 @@ class TextGenerator:
                 tf.random_uniform([vocabulary_size, embedding_size], -1.0, 1.0), name="embeddings")
             embedded_sequences = tf.nn.embedding_lookup(embeddings, sequences, name="lookup")        
             
-
         with tf.name_scope("Model"):
-            conv = True
+
             if conv:
                 weights_regularizer=tf.contrib.layers.l2_regularizer(1e-4)
-                h = tf.contrib.layers.conv2d(embedded_sequences, kernel_size=5, num_outputs=40, weights_regularizer=weights_regularizer)
+                h = tf.contrib.layers.conv2d(embedded_sequences, kernel_size=10, num_outputs=80, weights_regularizer=weights_regularizer)
                 h = tf.contrib.layers.batch_norm(h, is_training=is_training)
                 h = tf.contrib.layers.conv2d(h, kernel_size=5, num_outputs=80, weights_regularizer=weights_regularizer, stride=2)
                 h = tf.contrib.layers.batch_norm(h, is_training=is_training)
@@ -236,19 +238,17 @@ class TextGenerator:
 
      
             else:
-                num_layers = 2
-                rnn_size = 256
+                num_layers = 4
+                rnn_size = 512
                 cell = tf.nn.rnn_cell.MultiRNNCell([tf.nn.rnn_cell.GRUCell(num_units=rnn_size) for _ in range(num_layers)])
 
                 outputs, states = tf.nn.dynamic_rnn(
                     cell=cell,
                     dtype=tf.float32,
                     inputs=embedded_sequences)
-                
-                outputs = tf.contrib.layers.linear(tf.contrib.layers.flatten(outputs), embedding_size)
+                outputs = tf.contrib.layers.linear(outputs, vocabulary_size, activation_fn=None)
 
         with tf.name_scope("Cost"):
-
             ml_loss = tf.identity(tf.reduce_mean(tf.nn.sparse_softmax_cross_entropy_with_logits(labels=labels, logits=outputs), name="ml_loss"))
             tf.summary.scalar("ml_loss", ml_loss)
             reg_loss = tf.reduce_sum(tf.get_collection(tf.GraphKeys.REGULARIZATION_LOSSES))
@@ -263,9 +263,18 @@ class TextGenerator:
                 optimizer = tf.train.AdamOptimizer().minimize(loss, name="optimizer")
 
         with tf.name_scope("Accuracies"):
-            accuracy = tf.reduce_mean(tf.cast(tf.equal(tf.argmax(outputs, 1), labels) , "float"), name="accuracy")
+            accuracy = tf.reduce_mean(tf.cast(tf.equal(tf.argmax(outputs, -1), labels) , "float"), name="accuracy")
             #accuracy = tf.reduce_mean(tf.cast(tf.equal(tf.argmax(logits, 1), labels) , "float"), name="accuracy")
             tf.summary.scalar("accuracy", accuracy)
+
+            if conv:
+                in_top_3 = tf.reduce_mean(tf.cast(tf.nn.in_top_k(tf.reshape(outputs, shape=(-1, vocabulary_size)), labels, 3), "float"), name="in_top_3")
+            else:
+
+                in_top_3 = tf.reduce_mean(tf.cast(tf.nn.in_top_k(
+                    tf.reshape(outputs, shape=(-1, vocabulary_size)),
+                    tf.reshape(labels, shape=[-1]), 3), "float"), name="in_top_3")
+            tf.summary.scalar("in_top_3", in_top_3)
             
         summaries_tensor = tf.summary.merge_all(key=tf.GraphKeys.SUMMARIES)
         train_writer = tf.summary.FileWriter(os.path.join(output_dir, "train"), sess.graph)
