@@ -162,40 +162,42 @@ class TextGenerator:
         dataset = dataset.batch(batch_size)
         return dataset
 
-    def generate_text(vocabulary_file, model_file, embedding_size=10, sequence_length=100):
+    def generate_text(vocabulary_file, model_file, embedding_size=10, sequence_length=100, start_sequence="The ", conv=False):
         vocabulary = utils.Vocabulary.load_from_file(vocabulary_file)
-        start_text = [vocabulary.vocabulary[i] for i in "And "]
+        start_text = [vocabulary.vocabulary[i] for i in start_sequence]
         text = start_text
         sess=tf.Session()
         
         saver = tf.train.import_meta_graph(model_file)
         saver.restore(sess, tf.train.latest_checkpoint(os.path.dirname(model_file)))
         graph = tf.get_default_graph()
-        embedding = graph.get_tensor_by_name("Model/normed_embeddings:0")
-        closest_characters = graph.get_tensor_by_name("Accuracies/closest_characters:0")
-        embedded_sequences = graph.get_tensor_by_name("Input/embedded_sequences:0")
-        is_sampling = graph.get_tensor_by_name("Input/is_sampling:0")
+        sequences = graph.get_tensor_by_name("Input/sequences:0")
+        logits = graph.get_tensor_by_name("Model/logits:0")
         is_training = graph.get_tensor_by_name("Input/is_training:0")
-        
+        _, old_sequence_length = sequences.get_shape().as_list()
         
         while len(text) < sequence_length:
-            embedded_text = tf.nn.embedding_lookup(embedding, text, name="lookup")
-            seq_len, _ = embedded_text.shape
+            text_to_use = text[-old_sequence_length:]
+            padded_text = np.pad(text_to_use, (old_sequence_length - len(text_to_use), 0), mode="constant")
+            resh = np.reshape(padded_text, (1, -1))
+            logts = sess.run(logits, feed_dict={sequences: resh, is_training:False})
 
-            next_char = sess.run(closest_characters, feed_dict={embedded_sequences: embedded_text.eval(session=sess), is_sampling:True, is_training:False})
-            text.append(next_char)
+            if conv:
+                print(logts)
+                next_char_int = np.random.choice(len(logts[0]), p=logts[0])
+            else:
+                next_char_int = np.random.choice(len(logts[0][-1]), p=logts[0][-1])
+            text.append(next_char_int)
         converted_text = "".join(vocabulary.inverse_vocabulary[s] for s in text)
         print(converted_text)
         
     def create_text_generator(train_filenames, validation_filenames, vocabulary_file,
                               output_dir, chunk_size=1000, embedding_size=10, max_steps=500000,
                               sequence_length=100, conv=False):
-        batch_size = 128
+        batch_size = 32
 
         vocabulary = utils.Vocabulary.load_from_file(vocabulary_file)
-        vocabulary_size = vocabulary.size
-
-            
+        vocabulary_size = vocabulary.size            
 
         train_dataset = TextGenerator.make_dataset(train_filenames, sequence_length, batch_size, chunk_size, conv)
         train_iterator = train_dataset.make_initializable_iterator()
@@ -210,11 +212,16 @@ class TextGenerator:
         with tf.name_scope("Input"):
             is_training = tf.placeholder(tf.bool, name="is_training")
             handle = tf.placeholder(tf.string, shape=[], name="handle")
-            iterator = tf.data.Iterator.from_string_handle(
-                handle, train_dataset.output_types, train_dataset.output_shapes)
-            #sequences, embedded_sequences, labels, embedded_labels = iterator.get_next()
 
-            sequences, labels = iterator.get_next()
+            if handle is None:
+                sequences = tf.placeholder(tf.int32, shape=[None, None], name="sequences")
+                labels = tf.placeholder(tf.int32, shape=[None, None], name="labels")
+            else:
+                iterator = tf.data.Iterator.from_string_handle(
+                    handle, train_dataset.output_types, train_dataset.output_shapes)
+                sequences, labels = iterator.get_next()
+                sequences = tf.identity(sequences, name="sequences")
+                labels = tf.identity(labels, name="labels")
 
         with tf.name_scope("Embeddings"):
             embeddings = tf.Variable(
@@ -222,32 +229,46 @@ class TextGenerator:
             embedded_sequences = tf.nn.embedding_lookup(embeddings, sequences, name="lookup")        
             
         with tf.name_scope("Model"):
-
+            weights_regularizer=tf.contrib.layers.l2_regularizer(1e-4)
             if conv:
-                weights_regularizer=tf.contrib.layers.l2_regularizer(1e-4)
-                h = tf.contrib.layers.conv2d(embedded_sequences, kernel_size=10, num_outputs=80, weights_regularizer=weights_regularizer)
+                h = tf.contrib.layers.conv2d(embedded_sequences, kernel_size=10, num_outputs=128, weights_regularizer=weights_regularizer)
                 h = tf.contrib.layers.batch_norm(h, is_training=is_training)
-                h = tf.contrib.layers.conv2d(h, kernel_size=5, num_outputs=80, weights_regularizer=weights_regularizer, stride=2)
+                h = tf.contrib.layers.conv2d(h, kernel_size=5, num_outputs=256, weights_regularizer=weights_regularizer, stride=2)
                 h = tf.contrib.layers.batch_norm(h, is_training=is_training)
-                h = tf.contrib.layers.conv2d(h, kernel_size=5, num_outputs=160, weights_regularizer=weights_regularizer, stride=2)
+                h = tf.contrib.layers.conv2d(h, kernel_size=5, num_outputs=256, weights_regularizer=weights_regularizer, stride=2)
                 h = tf.contrib.layers.batch_norm(h, is_training=is_training)
-                h = tf.contrib.layers.conv2d(h, kernel_size=5, num_outputs=320, weights_regularizer=weights_regularizer, stride=2)
+                h = tf.contrib.layers.conv2d(h, kernel_size=5, num_outputs=512, weights_regularizer=weights_regularizer, stride=2)
+
+                h_res = tf.contrib.layers.conv2d(embedded_sequences, kernel_size=10, num_outputs=128, weights_regularizer=weights_regularizer, stride=8)
+                h = tf.concat([h, h_res], axis=-1)
+                
                 h = tf.contrib.layers.batch_norm(h, is_training=is_training)
                 h = tf.contrib.layers.flatten(h)
+                h = tf.contrib.layers.fully_connected(h, 1024, weights_regularizer=weights_regularizer)
+                h = tf.contrib.layers.batch_norm(h, is_training=is_training)
                 outputs = tf.identity(tf.contrib.layers.fully_connected(h, vocabulary_size, activation_fn=None), name="outputs")
-
+                logits = tf.nn.softmax(outputs, name="logits")
      
             else:
                 num_layers = 4
-                rnn_size = 512
-                cell = tf.nn.rnn_cell.MultiRNNCell([tf.nn.rnn_cell.GRUCell(num_units=rnn_size) for _ in range(num_layers)])
+                rnn_size = 1024
+
+                keep_prob = tf.cond(is_training, lambda: 0.5, lambda: 1.0)
+                
+                cell = tf.nn.rnn_cell.MultiRNNCell([
+                    tf.contrib.rnn.DropoutWrapper(
+                        tf.nn.rnn_cell.LSTMCell(num_units=rnn_size),
+                        output_keep_prob=keep_prob) for _ in range(num_layers)])
 
                 outputs, states = tf.nn.dynamic_rnn(
                     cell=cell,
                     dtype=tf.float32,
                     inputs=embedded_sequences)
-                outputs = tf.contrib.layers.linear(outputs, vocabulary_size, activation_fn=None)
+                
+                outputs = tf.contrib.layers.linear(outputs, vocabulary_size, activation_fn=None, weights_regularizer=weights_regularizer)
+                logits = tf.nn.softmax(outputs, name="logits")
 
+                
         with tf.name_scope("Cost"):
             ml_loss = tf.identity(tf.reduce_mean(tf.nn.sparse_softmax_cross_entropy_with_logits(labels=labels, logits=outputs), name="ml_loss"))
             tf.summary.scalar("ml_loss", ml_loss)
