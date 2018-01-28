@@ -9,8 +9,6 @@ setup(name='character_rnn',
       license='MIT',
       packages=['character_rnn'],
       install_requires=[
-          'argh',
-          'numpy',
-          'tensorflow'
+          'argh'
           ],
       zip_safe=False)

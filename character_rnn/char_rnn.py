@@ -14,14 +14,8 @@ def preprocess(filenames, output_dir=None, chunk_size=250):
     r.process(filenames)
     r.dump_vocabulary()
     
-@argh.arg("train-filenames", nargs="+")
-@argh.arg("validation-filenames", nargs="+")
-@argh.arg("-o", "--output-dir", required=True)
-def create_embedding(train_filenames, validation_filenames, vocabulary_file, output_dir=None, chunk_size=1000, embedding_size=10):
-    networks.Embedding.create_embedding(train_filenames, validation_filenames, vocabulary_file, output_dir, chunk_size=chunk_size, embedding_size=embedding_size)
-
-def create_text_generator(train_filenames, validation_filenames, vocabulary_file, output_dir=None, chunk_size=1000, sequence_length=100, embedding_size=10, conv=False):
-    networks.TextGenerator.create_text_generator(train_filenames, validation_filenames, vocabulary_file, output_dir, chunk_size=chunk_size, sequence_length=sequence_length, embedding_size=embedding_size, conv=conv)
+def create_text_generator(train_filenames, validation_filenames, vocabulary_file, output_dir=None, chunk_size=1000, sequence_length=100, embedding_size=10):
+    networks.TextGenerator.create_text_generator(train_filenames, validation_filenames, vocabulary_file, output_dir, chunk_size=chunk_size, sequence_length=sequence_length, embedding_size=embedding_size)
 
 
 def generate_text(vocabulary_file, model_file, embedding_size=10, sequence_length=100, conv=False):
