@@ -45,12 +45,10 @@ def create_text_generator(train_filenames, validation_filenames, vocabulary_file
             steps=1, name="validation")
 
 
-        #predictions = rnn.predict(
-        #    input_fn=lambda: networks.TextGenerator.input_fn(validation_filenames, sequence_length, 32, chunk_size))
-
-        #for prediction in predictions:
-        #    print(prediction)
-
+        sample = networks.TextGenerator.sample(rnn, vocabulary, 100, 20, temperature=1)
+        print(sample)
+        #sample = networks.TextGenerator.sample(rnn, vocabulary, 100, 20, temperature=0)
+        #print(sample)
 
 def generate_text(vocabulary_file, model_file, embedding_size=10, sequence_length=100, conv=False):
     networks.TextGenerator.generate_text(vocabulary_file, model_file, embedding_size=embedding_size, sequence_length=sequence_length, conv=conv)

@@ -48,10 +48,27 @@ class TextGenerator:
         iterator = dataset.make_one_shot_iterator()
         return iterator.get_next()    
 
-    def input_fn_predict(vocabulary, sequence_length, sample_length, start="The"):
-        start_text = [vocabulary.vocabulary[i] for i in start]
+    def input_fn_predict(start_text):
+        dataset = tf.data.Dataset.from_tensors([start_text])
+        iterator = dataset.make_one_shot_iterator()
+        return iterator.get_next()
         
+    def sample(rnn, vocabulary, sequence_length, sample_length, start="The", temperature=1.0):
+        full_text = [vocabulary.vocabulary[char] for char in start]
+        while len(full_text) < sample_length:
+            text = full_text[-sequence_length:]
+            predictions = rnn.predict(input_fn = lambda: TextGenerator.input_fn_predict(text))
+            for prediction in predictions:
+                probabilities = prediction["probabilities"]
+                if np.random.random() <= temperature:
+                    new_char = np.random.choice(vocabulary.size, p=probabilities[-1])
+                else:
+                    new_char = tf.argmax(probabilities, axis=-1)
+                full_text.append(new_char)
+        return "".join([vocabulary.inverse_vocabulary[char] for char in full_text])
+
     
+            
     def model_fn(features, labels, mode, params):
 
         with tf.name_scope("Model"):
@@ -65,6 +82,7 @@ class TextGenerator:
                     tf.nn.rnn_cell.LSTMCell(num_units=rnn_size),
                     output_keep_prob=keep_prob) for _ in range(num_layers)])
 
+            print("features:", features)
             outputs, states = tf.nn.dynamic_rnn(
                 cell=cell,
                 dtype=tf.float32,
