@@ -23,29 +23,110 @@ class TextGenerator:
         paddings = tf.constant([[sequence_length, 0]])
         return tf.pad(sequence, paddings, "CONSTANT")
 
-    def __random_crop(sequence, sequence_length, conv):
+    def __random_crop(sequence, sequence_length):
         cropped = tf.random_crop(sequence, [sequence_length+1])
         cropped_sequence = tf.slice(cropped, [0], [sequence_length])
-        if conv:
-            label = tf.reshape(tf.slice(cropped, [sequence_length], [1]), shape=[])
-        else:
-            label = tf.slice(cropped, [1], [sequence_length])
+        label = tf.slice(cropped, [1], [sequence_length])
         return cropped_sequence, label
     
-    def make_dataset(filenames,  sequence_length, batch_size, chunk_size, conv):
+    def make_dataset(filenames,  sequence_length, batch_size, chunk_size):
         parse_function = partial(TextGenerator.__parse__function, chunk_size=chunk_size)
-        #embedding_lookup = partial(TextGenerator.__embedding_lookup, embeddings=embeddings)
-        #pad_sequence = partial(TextGenerator.__pad_sequence, sequence_length=sequence_length)
         random_crop = partial(TextGenerator.__random_crop,
-                              sequence_length=sequence_length, conv=conv)
-        
-        dataset = tf.data.TFRecordDataset(filenames)
-        dataset = dataset.map(parse_function)
-        dataset = dataset.map(random_crop)
-        dataset = dataset.shuffle(buffer_size=batch_size * 5)
-        dataset = dataset.repeat(None)
-        dataset = dataset.batch(batch_size)
+                              sequence_length=sequence_length)
+        dataset = (tf.data.TFRecordDataset(filenames)
+                   .map(parse_function)
+                   .map(random_crop)
+                   .cache()
+                   .shuffle(batch_size * 10)
+                   .repeat(None)
+                   .batch(batch_size)
+                   .prefetch(1))
         return dataset
+
+    def input_fn(filenames, sequence_length, batch_size, chunk_size):
+        dataset = TextGenerator.make_dataset(filenames, sequence_length, batch_size, chunk_size)
+        iterator = dataset.make_one_shot_iterator()
+        return iterator.get_next()    
+
+    def input_fn_predict(vocabulary, sequence_length, sample_length):
+        start = "The"
+        start_text = None
+        pass
+    
+    def model_fn(features, labels, mode, params):
+
+        with tf.name_scope("Model"):
+            weights_regularizer=tf.contrib.layers.l2_regularizer(1e-4)
+            num_layers = 1
+            rnn_size = 48
+
+            keep_prob = 1 #tf.cond(is_training, lambda: 0.5, lambda: 1.0)
+            cell = tf.nn.rnn_cell.MultiRNNCell([
+                tf.contrib.rnn.DropoutWrapper(
+                    tf.nn.rnn_cell.LSTMCell(num_units=rnn_size),
+                    output_keep_prob=keep_prob) for _ in range(num_layers)])
+
+            outputs, states = tf.nn.dynamic_rnn(
+                cell=cell,
+                dtype=tf.float32,
+                inputs=tf.one_hot(features, params["vocabulary_size"]))
+                
+            outputs = tf.contrib.layers.linear(outputs, params["vocabulary_size"], activation_fn=None, weights_regularizer=weights_regularizer)            
+            logits = tf.nn.softmax(outputs, name="logits")
+
+                
+        with tf.name_scope("Cost"):
+            print("labels", labels)
+            print("outputs", outputs)
+            ml_loss = tf.identity(tf.reduce_mean(tf.nn.sparse_softmax_cross_entropy_with_logits(labels=labels, logits=outputs), name="ml_loss"))
+            tf.summary.scalar("ml_loss", ml_loss)
+            reg_loss = tf.reduce_sum(tf.get_collection(tf.GraphKeys.REGULARIZATION_LOSSES))
+            tf.summary.scalar("reg_loss", reg_loss)
+            loss = ml_loss + reg_loss
+            tf.summary.scalar("loss", loss)
+            
+        with tf.name_scope("Train"):
+            # hyperparameters?
+            update_ops = tf.get_collection(tf.GraphKeys.UPDATE_OPS)
+            with tf.control_dependencies(update_ops):
+                optimizer = tf.train.AdamOptimizer().minimize(loss,  global_step=tf.train.get_global_step(), name="optimizer")
+        
+
+        with tf.name_scope("Accuracies"):
+            
+            # replace with tf metrics?
+            predicted_classes = tf.argmax(outputs, -1)
+            print("pc", predicted_classes)
+            print("labels", labels)
+            accuracy = tf.metrics.accuracy(predicted_classes, labels)
+
+            tf.summary.scalar("accuracy", accuracy[0])
+
+            in_top_3 = tf.reduce_mean(tf.cast(tf.nn.in_top_k(
+                tf.reshape(outputs, shape=(-1, params["vocabulary_size"])),
+                tf.reshape(labels, shape=[-1]), 3), "float"), name="in_top_3")
+            tf.summary.scalar("in_top_3", in_top_3)
+            
+            metrics = {
+                "accuracy": accuracy
+            }
+            
+        if mode == tf.estimator.ModeKeys.TRAIN:
+            return tf.estimator.EstimatorSpec(mode, loss=loss, train_op=optimizer)
+            
+        if mode == tf.estimator.ModeKeys.EVAL:            
+            return tf.estimator.EstimatorSpec(
+                 mode, loss=loss, eval_metric_ops=metrics)
+
+
+        if mode == tf.estimate.ModeKeys.PREDICT:
+            predictions = {
+                'class_ids': predicted_classes[:, tf.newaxis],
+                'probabilities': tf.nn.softmax(logits),
+                'logits': logits,
+            }
+            return tf.estimator.EstimatorSpec(mode, predictions=predictions)
+
 
     def generate_text(vocabulary_file, model_file, embedding_size=10, sequence_length=100, start_sequence="The ", conv=False):
         vocabulary = utils.Vocabulary.load_from_file(vocabulary_file)
