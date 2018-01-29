@@ -48,10 +48,9 @@ class TextGenerator:
         iterator = dataset.make_one_shot_iterator()
         return iterator.get_next()    
 
-    def input_fn_predict(vocabulary, sequence_length, sample_length):
-        start = "The"
-        start_text = None
-        pass
+    def input_fn_predict(vocabulary, sequence_length, sample_length, start="The"):
+        start_text = [vocabulary.vocabulary[i] for i in start]
+        
     
     def model_fn(features, labels, mode, params):
 
@@ -73,7 +72,16 @@ class TextGenerator:
                 
             outputs = tf.contrib.layers.linear(outputs, params["vocabulary_size"], activation_fn=None, weights_regularizer=weights_regularizer)            
             logits = tf.nn.softmax(outputs, name="logits")
-
+            predicted_classes = tf.argmax(outputs, -1)
+            
+        if mode == tf.estimator.ModeKeys.PREDICT:
+            predictions = {
+                'class_ids': predicted_classes[:, tf.newaxis],
+                'probabilities': tf.nn.softmax(logits),
+                'logits': logits,
+            }
+            return tf.estimator.EstimatorSpec(mode, predictions=predictions)
+            
                 
         with tf.name_scope("Cost"):
             print("labels", labels)
@@ -95,7 +103,7 @@ class TextGenerator:
         with tf.name_scope("Accuracies"):
             
             # replace with tf metrics?
-            predicted_classes = tf.argmax(outputs, -1)
+
             print("pc", predicted_classes)
             print("labels", labels)
             accuracy = tf.metrics.accuracy(predicted_classes, labels)
@@ -119,13 +127,6 @@ class TextGenerator:
                  mode, loss=loss, eval_metric_ops=metrics)
 
 
-        if mode == tf.estimate.ModeKeys.PREDICT:
-            predictions = {
-                'class_ids': predicted_classes[:, tf.newaxis],
-                'probabilities': tf.nn.softmax(logits),
-                'logits': logits,
-            }
-            return tf.estimator.EstimatorSpec(mode, predictions=predictions)
 
 
     def generate_text(vocabulary_file, model_file, embedding_size=10, sequence_length=100, start_sequence="The ", conv=False):
