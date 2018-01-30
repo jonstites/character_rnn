@@ -2,6 +2,8 @@
 
 A character-by-character text generator using an recurrent neural network (RNN).
 
+Note: the code has been updated to use tensorflow's higher-level APIs. This README needs to be updated.
+
 # Fun Examples
 
 With the [Bible](http://www.bibleprotector.com/TEXT-PCE-127-TAB.txt):
