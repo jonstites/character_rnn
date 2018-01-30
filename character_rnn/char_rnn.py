@@ -13,46 +13,70 @@ def preprocess(filenames, output_dir=None, chunk_size=250):
     r.chunk_size = chunk_size
     r.process(filenames)
     r.dump_vocabulary()
-    
-def create_text_generator(train_filenames, validation_filenames, vocabulary_file, chunk_size=1000, sequence_length=100):
-    #networks.TextGenerator.create_text_generator(train_filenames, validation_filenames, vocabulary_file, output_dir, chunk_size=chunk_size, sequence_length=sequence_length, embedding_size=embedding_size)
 
+
+
+def create_text_generator(
+        train_filenames, validation_filenames, vocabulary_file, output_dir=None,
+        chunk_size=1000, sequence_length=100, batch_size=32,
+        rnn_size=256, num_layers=1):
+    
+    vocabulary = utils.Vocabulary.load_from_file(vocabulary_file)
+    vocabulary_size = vocabulary.size            
+
+    config= tf.estimator.RunConfig(
+        save_checkpoints_steps=10000,
+        save_checkpoints_secs=None
+    )
+
+    rnn = tf.estimator.Estimator(
+        model_fn = networks.TextGenerator.model_fn,
+        model_dir=output_dir,
+        config=config,
+        params={
+            "vocabulary_size": vocabulary_size,
+            "rnn_size": rnn_size,
+            "num_layers": num_layers,
+            "keep_prob": 1
+            }
+        )
+
+
+    train_input = lambda: networks.TextGenerator.input_fn(train_filenames, sequence_length, batch_size, chunk_size, repeat_count=None, shuffle_count=1024)
+    validation_input = lambda: networks.TextGenerator.input_fn(validation_filenames, sequence_length, batch_size, chunk_size, repeat_count=None, shuffle_count=1024)
+
+    experiment = tf.contrib.learn.Experiment(
+        rnn,
+        train_input,
+        validation_input,
+        checkpoint_and_export=True,
+        eval_steps=100
+        )
+    
+    experiment.train_and_evaluate()
+
+
+
+def generate_text(
+        vocabulary_file, output_dir, sequence_length=100,
+        sample_length=100, start="The", temperature=1.0):
+    
     vocabulary = utils.Vocabulary.load_from_file(vocabulary_file)
     vocabulary_size = vocabulary.size            
 
     rnn = tf.estimator.Estimator(
         model_fn = networks.TextGenerator.model_fn,
+        model_dir=output_dir,
         params={
-            "vocabulary_size": vocabulary_size
-            }
-        )
+            "vocabulary_size": vocabulary_size,
+            "num_layers":1,
+            "rnn_size":24
+        }
+    )
 
-    #config=
-
-    #tf.estimator.RunConfig(session_config=tf.ConfigProto(log_device_placement=True))
-
-    for _ in range(100):
-        rnn.train(
-            input_fn=lambda: networks.TextGenerator.input_fn(train_filenames, sequence_length, 32, chunk_size),
-            steps=200)
-
-        rnn.evaluate(
-            input_fn=lambda: networks.TextGenerator.input_fn(train_filenames, sequence_length, 32, chunk_size),
-            steps=1, name="train")
-        
-        rnn.evaluate(
-            input_fn=lambda: networks.TextGenerator.input_fn(validation_filenames, sequence_length, 32, chunk_size),
-            steps=1, name="validation")
-
-
-        sample = networks.TextGenerator.sample(rnn, vocabulary, 100, 20, temperature=1)
-        print(sample)
-        #sample = networks.TextGenerator.sample(rnn, vocabulary, 100, 20, temperature=0)
-        #print(sample)
-
-def generate_text(vocabulary_file, model_file, embedding_size=10, sequence_length=100, conv=False):
-    networks.TextGenerator.generate_text(vocabulary_file, model_file, embedding_size=embedding_size, sequence_length=sequence_length, conv=conv)
-    
+    text = networks.TextGenerator.sample(rnn, vocabulary, sequence_length, sample_length, start, temperature)
+    print(text)
+                                  
 if __name__ == "__main__":
     parser = argh.ArghParser()
     parser.add_commands([preprocess, create_text_generator, generate_text])
