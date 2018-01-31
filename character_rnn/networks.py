@@ -127,20 +127,20 @@ class TextGenerator:
 
         with tf.name_scope("Accuracies"):
              
-            accuracy = tf.metrics.accuracy(predicted_classes, labels)
+            accuracy = tf.metrics.accuracy(labels, predicted_classes)
+            
             tf.summary.scalar("accuracy", accuracy[1])
 
-            in_top_3 = tf.reduce_mean(tf.cast(tf.nn.in_top_k(
-                tf.reshape(outputs, shape=(-1, params["vocabulary_size"])),
-                tf.reshape(labels, shape=[-1]), 3), "float"), name="in_top_3")
-            tf.summary.scalar("in_top_3", in_top_3)
+            in_top_3 = tf.metrics.recall_at_k(labels, logits, 3)
+            tf.summary.scalar("in_top_3", in_top_3[1])
             
             metrics = {
-                "accuracy": accuracy
+                "accuracy": accuracy,
+                "top 3": in_top_3
             }
             
         if mode == tf.estimator.ModeKeys.TRAIN:
-            return tf.estimator.EstimatorSpec(mode, loss=loss, train_op=optimizer, eval_metric_ops=metrics)
+            return tf.estimator.EstimatorSpec(mode, loss=loss, train_op=optimizer)
             
         if mode == tf.estimator.ModeKeys.EVAL:            
             return tf.estimator.EstimatorSpec(
