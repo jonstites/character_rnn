@@ -19,7 +19,7 @@ def preprocess(filenames, output_dir=None, chunk_size=250):
 def create_text_generator(
         train_filenames, validation_filenames, vocabulary_file, output_dir=None,
         chunk_size=1000, sequence_length=100, batch_size=32, dropout_keep_prob=1.0,
-        rnn_size=256, num_layers=1):
+        rnn_size=256, num_layers=1, embedding_size=10):
     
     vocabulary = utils.Vocabulary.load_from_file(vocabulary_file)
     vocabulary_size = vocabulary.size            
@@ -37,7 +37,8 @@ def create_text_generator(
             "vocabulary_size": vocabulary_size,
             "rnn_size": rnn_size,
             "num_layers": num_layers,
-            "keep_prob": dropout_keep_prob
+            "keep_prob": dropout_keep_prob,
+            "embedding_size": embedding_size
             }
         )
 
@@ -59,7 +60,7 @@ def create_text_generator(
     
 def generate_text(
         vocabulary_file, output_dir, sequence_length=100, rnn_size=256, num_layers=1,
-        sample_length=100, start="The", temperature=1.0):
+        sample_length=100, start="The", temperature=1.0, embedding_size=10):
     
     vocabulary = utils.Vocabulary.load_from_file(vocabulary_file)
     vocabulary_size = vocabulary.size            
@@ -70,7 +71,8 @@ def generate_text(
         params={
             "vocabulary_size": vocabulary_size,
             "num_layers": num_layers,
-            "rnn_size": rnn_size
+            "rnn_size": rnn_size,
+            "embedding_size": embedding_size
         }
     )
 

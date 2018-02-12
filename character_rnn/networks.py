@@ -87,13 +87,15 @@ class TextGenerator:
                 dtype=tf.float32,
                 inputs=tf.one_hot(features, params["vocabulary_size"]))
                 """
+
+            embeddings = tf.Variable(
+                tf.random_uniform([params["vocabulary_size"], params["embedding_size"]], -1.0, 1.0), name="embeddings")
+
+            embedded_sequences = tf.nn.embedding_lookup(embeddings, features)
             cell = tf.contrib.cudnn_rnn.CudnnLSTM(
                 params["num_layers"], params["rnn_size"], dropout=1-keep_prob)
 
-            outputs, states = cell(
-                tf.transpose(
-                    tf.one_hot(features, params["vocabulary_size"]),
-                    perm=[1, 0, 2]))
+            outputs, states = cell(tf.transpose(embedded_sequences, perm=[1, 0, 2]))
             
             #outputs = tf.contrib.layers.linear(outputs, params["vocabulary_size"], activation_fn=None, weights_regularizer=weights_regularizer)
             outputs = tf.contrib.layers.linear(
