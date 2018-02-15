@@ -3,12 +3,17 @@
 
 import argh
 from collections import Counter
+import glob
 import keras
 from keras.models import Sequential
 from keras.layers import Dense
 import numpy as np
+from keras.models import load_model
 import random
 import math
+import os
+from sklearn.model_selection import train_test_split
+from keras.callbacks import ModelCheckpoint
 
 
 def load_text(text_file):
@@ -24,21 +29,6 @@ def split_text(text):
         if len(chunk) == chunk_size:
             chunks.append(chunk)
     return chunks
-
-def train_val_split(text):
-
-    chunks = split_text(text)
-
-    random.seed(0)
-    randomized_chunks = random.shuffle(chunks)
-
-    validation_fraction = 0.1
-    pivot = math.ceil( len(chunks) * validation_fraction)
-
-    validation = chunks[:pivot]
-    train = chunks[pivot:]
-
-    return train, validation
 
 def get_ids(train, min_count):
     counts = Counter()
@@ -68,7 +58,8 @@ def convert(chunks, ids):
 
 def converted_train_val_split(text_file, min_count):
     text = load_text(text_file)
-    train, validation = train_val_split(text)
+    text_chunks = split_text(text)
+    train, validation = train_test_split(text_chunks, test_size=0.2, random_state=0)
     ids = get_ids(train, min_count)
     return convert(train, ids), convert(validation, ids), ids
 
@@ -94,30 +85,47 @@ def generate(model, ids, start_text="And so ", length=200, temperature=0.5):
     return text
         
 
-def main(text_file, min_count=10, epochs=10):
+def main(text_file, min_count=10, epochs=10, model_dir=""):
 
     train, validation, ids = converted_train_val_split(text_file, min_count)
     train_x, train_y = train
-    validation_x, validation_y = validation
-    batch_size = 64
-    num_words = len(ids) + 1
-    print(train_y.shape)
-    print(train_x.shape)
+    batch_size = 32
+    num_words = len(ids) + 1    
+
+
+    model_files = glob.glob(os.path.join(model_dir, "model-*.hdf5"))
+    epoch = 0
+    if model_files:
+        print(model_files)
+        best_model = sorted(model_files, key=lambda x: int(os.path.basename(x).split("-")[1]), reverse=True)[0]
+        epoch = int(os.path.basename(best_model).split("-")[1])
+        print(best_model)
+        model = load_model(best_model)
+
+    else:
     
+        model = Sequential()
+        model.add(keras.layers.Embedding(num_words, 5, input_shape=(None,)))
+        model.add(keras.layers.CuDNNLSTM(128, return_sequences=True))
+        model.add(keras.layers.CuDNNLSTM(128, return_sequences=True))
+        model.add(keras.layers.CuDNNLSTM(128, return_sequences=True))
+        model.add(keras.layers.TimeDistributed(
+            Dense(num_words, activation="softmax")))
+    
+        model.compile(loss='sparse_categorical_crossentropy',
+                      optimizer='Adam',
+                      metrics=['accuracy'])
 
-    model = Sequential()
-    model.add(keras.layers.Embedding(num_words, 5, input_shape=(None,)))
-    model.add(keras.layers.CuDNNLSTM(128, return_sequences=True))
-    model.add(keras.layers.TimeDistributed(
-        Dense(num_words, activation="softmax")))
+
+    if not os.path.exists(model_dir):
+        os.makedirs(model_dir)
+    filepath = os.path.join(model_dir, "model-{epoch:02d}-{val_loss:.2f}.hdf5")
+    checkpointer = ModelCheckpoint(filepath=filepath, verbose=1, save_best_only=True, period=10)
+    
     print(model.summary())
-    model.compile(loss='sparse_categorical_crossentropy',
-                  optimizer='Adam',
-                  metrics=['accuracy'])
-
-    model.fit(train_x, train_y, batch_size=batch_size, epochs=epochs)
-    loss_and_metrics = model.evaluate(validation_x, validation_y)    
-    print(loss_and_metrics)
+    
+    model.fit(train_x, train_y, batch_size=batch_size, epochs=epochs, validation_data=validation, callbacks=[checkpointer], initial_epoch=epoch)
+    
     print(generate(model, ids))
 
 if __name__ == "__main__":
