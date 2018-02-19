@@ -2,41 +2,46 @@
 
 A character-by-character text generator using an recurrent neural network (RNN).
 
-Note: the code has been updated to use tensorflow's higher-level APIs. This README needs to be updated.
+The network architecture starts with an embedding layer. Then a user-defined number of (LSTM + Batch Norm + Dropout) layers. Finally, there's a fully-connected layer + softmax over the labels.
+
+For text generation, there's a temperature option to allow a trade-off between sampling the character probability distribution and choosing the most likely character. I'd like to add beam search for better text generation.
 
 # Fun Examples
 
-With the [Bible](http://www.bibleprotector.com/TEXT-PCE-127-TAB.txt):
+These examples come from a network with three LSTM layers with 256 units each, embedding size of 10, and 0.5 dropout. 
 
-After 1 training epoch:
-> Badar amr therean; tre peaslt Masibting in from receta that is life in the tonars.
-> And hin offlabua there [ari chy] cateons.)
-> And Jusail; the king of Jebrishes, and thou [brine] wayes, and bpongyed [halb] to me, but and he syeplign strent to hor; the tomy evin counteth the wind of the altwide befole the tharl not to the flopher, the bolimenss, hath foriesh his fight [is] you said, for he man he spait unto the LORDghting kank the nhirst that thee is a clutt thine trils, and keoHt; are the ralpry.
+The collected works of Jane Austen, 70 epochs of training, temperature of 0.2, and seed text of "The ":
+>The property I have a staircase of the acquaintance and see the sister and the say of such a strong and sisters and the sisters and the same time to possibly as!—I am sure I had not even married the same time and silence of being a sort of sense and saying that, in the same time that I have not been a sensible of the same time to be seen the family of the same time to be taken a very serious too much to be aurised to him with. I have nothing to be sure for the attention to their sister’s conduct
 
-After 99 training epochs:
-> What will not ye suffer, but that [is] the presence of Jesus, which were born unto her for our dust shall dwell therein.
-> But we are warned in the sight of God; turn away his ropend: but the wicked shall come, which came to Samaria, and came near serpent, which said, Surely the people now should eat not in the sight of this goodness.
-> Yea, testation a soul shall surely be burniturl, which are most nothing to their gods, and lightness upon the circurce unto them.
-> For the morning appear to the tongue
 
+The [Bible](http://www.bibleprotector.com/TEXT-PCE-127-TAB.txt) with 70 epochs of training, temperature of 0.2, and seed text of "The ":
+>The LORD thy God shall be a son of man, and the strength of the LORD thy God hath seen the LORD that hath seen the word of the LORD thy God.
+>After the sons of Benjamin the son of Arawiah, and Abimelech, and Abimelech, she said unto him, The LORD hath sent me before the LORD thy God, and the sons of the sons of Jeroboam the son of Ammon, and the sons of Jeroboam the son of Amminazar, and Abimelech, Jahariah, and Abimelech, and Abihamam, and Amaziah, and Abimelech, and Abimelech, and Taran, and Ga
 
 # How to Run
 
-It's easiest to use [conda](https://conda.io/docs/user-guide/install/index.html#regular-installation) to install tensorflow and numpy.
+First install tensorflow, keras, and argh.
 
-The character_rnn can be installed with
+Then preprocess the data. It's going to save a numpy array of the characters and a mapping between characters and ids:
+```
+./model.py initialize ~/Data/text/jane_austen/concat_jane_austen.txt  -d ~/Data/text/jane_austen/chars/text_data.npy -i ~/Data/text/jane_austen/chars/text_ids.json```
+```
 
-```pip install .```
+Train the model. There are lots of options for the network architecture. If you have a GPU and CUDNN, then use the "--use-cudnn" option. It will be much faster.
+```
+./model.py train --epoch 70 -b 128  --use-cudnn -n 3 -r 256 --embedding-size 10 --dropout 0.5 -s 10 ~/Data/text/jane_austen/chars/text_data.npy ~/Data/text/jane_austen/chars/text_ids.json jane_austen_char_0
+```
 
-Then run the character RNN on some text:
-
-```./character_rnn/text_generator.py text.txt  > sampled_text.txt```
+Generate some text!
+```
+./model.py generate-text ~/Data/text/jane_austen/chars/text_ids.json jane_austen_char_0 --use-cudnn --temperature 0.2 --embedding-size 10 --rnn-size 256 --num-layers 3 --start-text "The "
+```
 
 # TODO
 
-* Rewrite with tests. This is really just a prototype to get something to work. I would like to start from scratch and incorporate a testing framework.
-* Use tensorboard to monitor training and validation loss.
-* Create a pre-processing step to learn character embeddings.
-* Allow the trained model (and future embeddings) to be saved and restored.
+* Have a flag to use words, rather than characters.
+* Support variable-length sequences. This may mean giving up the fast CuDNNLSTM.
+* Use a beam search for text generation.
+* Incorporate with tests and refactor to make the code nicer.
+* Have the model dump a history of the mini-batch loss and accuracy.
 * Allow training from multiple sources. For example, multiple authors could be used for training all at once. It could then generate text from any particular one of them. This would save on overall training time and allow the model to learn even from relatively small datasets for a particular author.
-* See if it works when using a convnet on character embeddings.
