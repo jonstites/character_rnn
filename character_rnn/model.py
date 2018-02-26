@@ -59,25 +59,35 @@ def process_text_file(text_file, chunk_size, min_count, validation_split=0.1, ra
     converted_chunks = np.stack(converted_chunks)
     return np.array(converted_chunks), ids
 
-def generate(model, ids, start_text="And so ", sample_length=500, sequence_length=100, temperature=0.5, beam_width=5):
+def generate(model, ids, start_text="And so ", sample_length=500, sequence_length=100, temperature=0.5, beam_width=5, branch_factor=5):
     text = start_text
     reverse_ids = dict(zip(ids.values(), ids.keys()))
     oov_id = ids["<OOV>"]
     
     converted_text = np.array([ids.get(i, oov_id) for i in text])
     tiled = np.tile(converted_text, (1, 1))
-    print(tiled.shape)
 
     parent_likelihoods = np.tile([0], (1))
     for _ in range(sample_length - len(text)):
-        predictions = model.predict(tiled)
+        predictions = model.predict(tiled[:, -sequence_length:])
         last_char_predictions = predictions[:, -1, :]
+        
         log_last_char_predictions = np.log(last_char_predictions)
         num_predictions = log_last_char_predictions.shape[-1]
-        tiled_parent_likelihoods = np.tile(parent_likelihoods, (num_predictions, 1))
+        tiled_parent_likelihoods = np.tile(parent_likelihoods, (num_predictions, 1)) 
         last_char_likelihoods = tiled_parent_likelihoods.T + log_last_char_predictions
 
-        best_indexes = np.unravel_index(np.argsort(last_char_likelihoods, axis=None)[-beam_width:], last_char_likelihoods.shape)
+
+        if np.random.random() < temperature:
+
+            top_indexes = np.array(
+                [np.random.choice(
+                    np.arange(i*num_predictions, (i+1)*num_predictions), p=np.exp(a)/np.sum(np.exp(a)), replace=False) for i, a in enumerate(last_char_likelihoods)])
+
+        else:
+            top_indexes = np.argsort(last_char_likelihoods, axis=None)[-beam_width:]
+
+        best_indexes = np.unravel_index(top_indexes, last_char_likelihoods.shape)
 
         parent_likelihoods = last_char_likelihoods[best_indexes]
         tiled = np.append(
@@ -85,11 +95,6 @@ def generate(model, ids, start_text="And so ", sample_length=500, sequence_lengt
             np.expand_dims(best_indexes[-1], axis=1), axis=-1)
 
         
-    for sample_batch in tiled:
-        text = ''.join(
-            [reverse_ids[char_id] for char_id in sample_batch])
-        print(text)
-
     best_batch_index = np.unravel_index(np.argsort(parent_likelihoods, axis=None)[-1:], tiled.shape)
     best_batch = np.squeeze(tiled[best_batch_index[:-1]])
     return "".join(
@@ -172,7 +177,7 @@ def train(data_file, ids_file, model_dir, epochs=10, batch_size=32,
 
 
 def generate_text(ids_file, model_dir, start_text="And so ", sample_length=500, temperature=0.5, use_cudnn=False, num_layers=3, rnn_size=256, embedding_size=10,
-                  dropout=0.5, sequence_length=100):
+                  dropout=0.5, sequence_length=100, beam_width=5):
 
     with open(ids_file) as ids_handle:
         ids = json.load(ids_handle)
@@ -186,7 +191,7 @@ def generate_text(ids_file, model_dir, start_text="And so ", sample_length=500, 
     if last_weights_file:
         model.load_weights(last_weights_file)
 
-    result = generate(model, ids, sample_length=sample_length, start_text=start_text, temperature=temperature, sequence_length=sequence_length)
+    result = generate(model, ids, sample_length=sample_length, start_text=start_text, temperature=temperature, sequence_length=sequence_length, beam_width=beam_width)
     print(result)
     
 if __name__ == "__main__":
