@@ -17,9 +17,27 @@ import json
 import yaml
 
 
-def process_text_file(text_file, chunk_size, min_count, validation_split=0.1, random_seed=0):
+def tokenize(text, filters='-!"#$%&()*+,-./:;<=>?@[\\]^_`{|}~\t\n '):
+    tokens = []
+    current_word = []
+    filter_lookup = set(filters)
+    for char in text:
+        if char in filter_lookup:
+            if current_word:
+                tokens.append("".join(current_word))
+                current_word = []
+            tokens.append(char)
+        else:
+            current_word.append(char)
+    if current_word:
+        tokens.append("".join(current_word))
+    return tokens
+
+def process_text_file(text_file, chunk_size, min_count, validation_split=0.1, random_seed=0, words=False):
     with open(text_file) as handle:
         text = handle.read()
+        if words:
+            text = tokenize(text)
 
     chunks = []
     for i in range(0, len(text), chunk_size):
@@ -31,6 +49,7 @@ def process_text_file(text_file, chunk_size, min_count, validation_split=0.1, ra
     random.shuffle(chunks)
 
     train_chunks = chunks[: int(validation_split * len(chunks))]
+    
     counts = Counter()
     for chunk in train_chunks:
         counts.update(chunk)
@@ -38,11 +57,12 @@ def process_text_file(text_file, chunk_size, min_count, validation_split=0.1, ra
     oov_char = "<OOV>"            
     invalid_chars = [char for char, count in counts.items() if count < min_count]
     counts[oov_char] = sum([counts[char] for char in invalid_chars])
-
-
     print("Training set had ", len(invalid_chars), " OOV char types representing ", counts[oov_char], " characters.")
+
     for char in invalid_chars:
         del counts[char]
+
+    print("Training set had ", len(counts.keys()), " total char types representing ", sum(counts.values()), " characters.")
     
     # deterministic sorting, highest counts first
     chars = sorted(counts.keys(), key=lambda x: (counts[x], x), reverse=True)
@@ -59,25 +79,51 @@ def process_text_file(text_file, chunk_size, min_count, validation_split=0.1, ra
     converted_chunks = np.stack(converted_chunks)
     return np.array(converted_chunks), ids
 
-def generate(model, ids, start_text="And so ", length=500, temperature=0.5):
+def generate(model, ids, start_text="And so ", sample_length=500, sequence_length=100, temperature=0.5, beam_width=5, branch_factor=5, words=False):
     text = start_text
+    if words:
+        text = tokenize(text)
     reverse_ids = dict(zip(ids.values(), ids.keys()))
+    oov_id = ids["<OOV>"]
+    
+    converted_text = np.array([ids.get(i, oov_id) for i in text])
+    tiled = np.tile(converted_text, (1, 1))
 
-    while len(text) < length:
-        converted_text = np.expand_dims(np.array([ids.get(i, len(ids.keys())) for i in text]), axis=0)
-
-        prediction = model.predict(converted_text)
-        probs = prediction[0][-1]
+    parent_likelihoods = np.tile([0], (1))
+    for _ in range(sample_length - len(text)):
+        predictions = model.predict(tiled[:, -sequence_length:])
+        last_char_predictions = predictions[:, -1, :]
         
-        if np.random.random() <= temperature:
-            new_char_id = np.random.choice(len(ids.keys()), p=probs) 
-        else:
-            new_char_id = np.argmax(probs)
-        new_char = reverse_ids.get(new_char_id, "<OOV>")
+        log_last_char_predictions = np.log(last_char_predictions)
+        num_predictions = log_last_char_predictions.shape[-1]
+        tiled_parent_likelihoods = np.tile(parent_likelihoods, (num_predictions, 1)) 
+        last_char_likelihoods = tiled_parent_likelihoods.T + log_last_char_predictions
 
-        # inefficient...
-        text = text + new_char
-    return text
+
+        if np.random.random() < temperature:
+
+            top_indexes = np.array(
+                [np.random.choice(
+                    np.arange(i*num_predictions, (i+1)*num_predictions), p=np.exp(a)/np.sum(np.exp(a)), replace=False) for i, a in enumerate(last_char_likelihoods)])
+
+        else:
+            top_indexes = np.argsort(last_char_likelihoods, axis=None)[-beam_width:]
+
+        best_indexes = np.unravel_index(top_indexes, last_char_likelihoods.shape)
+
+        parent_likelihoods = last_char_likelihoods[best_indexes]
+        parent_likelihoods = parent_likelihoods - max(parent_likelihoods)
+        tiled = np.append(
+            tiled[best_indexes[:-1]],
+            np.expand_dims(best_indexes[-1], axis=1), axis=-1)
+
+        
+    best_batch_index = np.unravel_index(np.argsort(parent_likelihoods, axis=None)[-1:], tiled.shape)
+    best_batch = np.squeeze(tiled[best_batch_index[:-1]])
+    return "".join(
+            [reverse_ids[char_id] for char_id in best_batch])
+
+
 
 def find_weights_file(model_dir, weights_filename):
     weights_regex = os.path.join(model_dir, "weights*.hdf5")
@@ -94,9 +140,10 @@ def find_weights_file(model_dir, weights_filename):
     return best_weights_file, best_epoch
 
 def initialize(text_file, data_output="text_data.npy",
-               ids_output="text_ids.json", min_count=10, sequence_length=100):
+               ids_output="text_ids.json", min_count=10, sequence_length=100,
+               words=False):
 
-    data, ids = process_text_file(text_file, sequence_length, min_count)
+    data, ids = process_text_file(text_file, sequence_length, min_count, words=words)
     np.save(data_output, data)
 
     with open(ids_output, 'w') as ids_handle:
@@ -123,6 +170,7 @@ def build_model(num_words, embedding_size, rnn_size, num_layers, dropout, use_cu
                   optimizer='Adam',
                   metrics=['accuracy'])
     return model
+
 def train(data_file, ids_file, model_dir, epochs=10, batch_size=32,
           use_cudnn=False, num_layers=3, rnn_size=256, embedding_size=10,
           dropout=0.5, save_period=10):
@@ -152,8 +200,8 @@ def train(data_file, ids_file, model_dir, epochs=10, batch_size=32,
     
 
 
-def generate_text(ids_file, model_dir, start_text="And so ", length=500, temperature=0.5, use_cudnn=False, num_layers=3, rnn_size=256, embedding_size=10,
-          dropout=0.5):
+def generate_text(ids_file, model_dir, start_text="And so ", sample_length=500, temperature=0.5, use_cudnn=False, num_layers=3, rnn_size=256, embedding_size=10,
+                  dropout=0.5, sequence_length=100, beam_width=5, words=False):
 
     with open(ids_file) as ids_handle:
         ids = json.load(ids_handle)
@@ -167,7 +215,7 @@ def generate_text(ids_file, model_dir, start_text="And so ", length=500, tempera
     if last_weights_file:
         model.load_weights(last_weights_file)
 
-    result = generate(model, ids, length=length, start_text=start_text, temperature=temperature)
+    result = generate(model, ids, sample_length=sample_length, start_text=start_text, temperature=temperature, sequence_length=sequence_length, beam_width=beam_width, words=words)
     print(result)
     
 if __name__ == "__main__":
