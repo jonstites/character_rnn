@@ -24,7 +24,7 @@ First install tensorflow, keras, and argh.
 
 Then preprocess the data. It's going to save a numpy array of the characters and a mapping between characters and ids:
 ```
-./model.py initialize ~/Data/text/jane_austen/concat_jane_austen.txt  -d ~/Data/text/jane_austen/chars/text_data.npy -i ~/Data/text/jane_austen/chars/text_ids.json```
+./model.py initialize ~/Data/text/jane_austen/concat_jane_austen.txt  -d ~/Data/text/jane_austen/chars/text_data.npy -i ~/Data/text/jane_austen/chars/text_ids.json
 ```
 
 Train the model. There are lots of options for the network architecture. If you have a GPU and CUDNN, then use the "--use-cudnn" option. It will be much faster.
