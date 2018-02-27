@@ -93,9 +93,15 @@ def generate(model, ids, start_text="And so ", sample_length=500, sequence_lengt
     for _ in range(sample_length - len(text)):
         predictions = model.predict(tiled[:, -sequence_length:])
         last_char_predictions = predictions[:, -1, :]
+        num_predictions = last_char_predictions.shape[-1]
         
+        oov_mask = np.ones(num_predictions)
+        oov_mask[oov_id] = 0
+
+        last_char_predictions = last_char_predictions * oov_mask
+
         log_last_char_predictions = np.log(last_char_predictions)
-        num_predictions = log_last_char_predictions.shape[-1]
+
         tiled_parent_likelihoods = np.tile(parent_likelihoods, (num_predictions, 1)) 
         last_char_likelihoods = tiled_parent_likelihoods.T + log_last_char_predictions
 
