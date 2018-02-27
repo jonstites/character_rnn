@@ -4,7 +4,7 @@ A character-by-character text generator using an recurrent neural network (RNN).
 
 The network architecture starts with an embedding layer. Then a user-defined number of (LSTM + Batch Norm + Dropout) layers. Finally, there's a fully-connected layer + softmax over the labels.
 
-For text generation, there's a temperature option to allow a trade-off between sampling the character probability distribution and choosing the most likely character. I'd like to add beam search for better text generation.
+For text generation, there's a temperature option to allow a trade-off between sampling the character probability distribution and choosing the most likely character. It also uses a beam search for better text generation.
 
 # Fun Examples
 
@@ -39,9 +39,9 @@ Generate some text!
 
 # TODO
 
-* Have a flag to use words, rather than characters.
+* ~~Have a flag to use words, rather than characters.~~
 * Support variable-length sequences. This may mean giving up the fast CuDNNLSTM.
-* Use a beam search for text generation.
+* ~~Use a beam search for text generation.~~
 * Incorporate with tests and refactor to make the code nicer.
 * Have the model dump a history of the mini-batch loss and accuracy.
 * Allow training from multiple sources. For example, multiple authors could be used for training all at once. It could then generate text from any particular one of them. This would save on overall training time and allow the model to learn even from relatively small datasets for a particular author.
